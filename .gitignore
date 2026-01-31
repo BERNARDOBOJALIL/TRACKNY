@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Entorno virtual
+venv/
+env/
+ENV/
+.venv
+
+# Modelos YOLO (archivos grandes)
+*.pt
+*.pth
+*.weights
+*.onnx
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archivos de Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs y bases de datos
+*.log
+*.sqlite
+*.db
+
+# Configuración de Ultralytics
+runs/
+*.yaml
+
+# Archivos temporales
+*.tmp
+*.bak
+*.cache
+
+# Videos y capturas de prueba
+*.mp4
+*.avi
+*.mov
+*.mkv
+test_videos/
+captures/
+
+# Configuración local
+.env
+config.local.py
