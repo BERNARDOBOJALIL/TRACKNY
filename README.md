@@ -12,7 +12,7 @@ El sistema forma parte de una solución más amplia de **gestión e información
 
 Esta implementación actual es un prototipo funcional que demuestra las capacidades básicas del sistema:
 
-- Detección de personas mediante YOLO (YOLOv8)
+- Detección de personas mediante YOLO (YOLOv26)
 - Seguimiento de ocupación en dos zonas independientes
 - Visualización en tiempo real del estado de cada máquina
 - Lógica temporal para evitar falsos positivos
@@ -21,7 +21,7 @@ Esta implementación actual es un prototipo funcional que demuestra las capacida
 
 ### Detección de Ocupación
 - **Dos máquinas independientes**: El sistema monitorea dos zonas separadas (40% izquierda, 40% derecha, con 20% de espacio neutral en el centro)
-- **Detección por presencia**: Utiliza YOLOv8 para detectar personas en tiempo real
+- **Detección por presencia**: Utiliza YOLOv26 para detectar personas en tiempo real
 - **Lógica temporal**:
   - Una máquina se marca como **OCUPADA** después de 10 segundos con una persona presente
   - Se marca como **DESOCUPADA** después de 5 segundos sin personas
@@ -47,7 +47,7 @@ Esta implementación actual es un prototipo funcional que demuestra las capacida
 - Python 3.12
 - OpenCV
 - Ultralytics YOLO
-- Modelo YOLOv8n (yolov8n.pt o yolo26n.pt)
+- Modelo YOLOv26n
 
 ## Instalación
 
@@ -73,7 +73,7 @@ pip install opencv-python ultralytics
 ```
 
 5. Descargar el modelo YOLO:
-   - Asegúrate de tener el archivo del modelo YOLO (`yolov8n.pt` o `yolo26n.pt`)
+   - Asegúrate de tener el archivo del modelo YOLO (`yolo26n.pt`)
    - Si no lo tienes, el sistema intentará descargarlo automáticamente (requiere conexión a internet)
 
 ## Uso
@@ -111,7 +111,7 @@ zona_m2_x1 = int(ancho * 0.60)  # Máquina 2: 40% derecha (con 20% de espacio)
                    │
                    ▼
 ┌─────────────────────────────────────────────────┐
-│      Detección de Personas (YOLOv8)             │
+│      Detección de Personas (YOLOv26)             │
 └──────────────────┬──────────────────────────────┘
                    │
                    ▼
@@ -175,7 +175,7 @@ ASEIII/
 - **Python 3.12**: Lenguaje principal
 - **OpenCV**: Captura y procesamiento de video
 - **Ultralytics YOLO**: Detección de objetos en tiempo real
-- **YOLOv8**: Modelo de deep learning para detección de personas
+- **YOLOv26**: Modelo de deep learning para detección de personas
 
 ## Créditos
 
