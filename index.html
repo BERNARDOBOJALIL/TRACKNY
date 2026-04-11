@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trackny | Estado en tiempo real</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --bg-2: #0d1b2d;
+      --card: rgba(12, 22, 38, 0.78);
+      --card-border: rgba(255, 255, 255, 0.10);
+      --text: #e8eef7;
+      --muted: #93a4bb;
+      --green: #21d07a;
+      --red: #ff5d5d;
+      --cyan: #45d3ff;
+      --shadow: 0 22px 70px rgba(0, 0, 0, 0.35);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(69, 211, 255, 0.22), transparent 28%),
+        radial-gradient(circle at 90% 15%, rgba(33, 208, 122, 0.16), transparent 24%),
+        linear-gradient(140deg, var(--bg), var(--bg-2));
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), transparent 92%);
+    }
+
+    .shell {
+      position: relative;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 18px 36px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.4fr 0.9fr;
+      gap: 18px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+    }
+
+    .intro {
+      padding: 26px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .intro::after {
+      content: "";
+      position: absolute;
+      inset: auto -20% -55% auto;
+      width: 340px;
+      height: 340px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(69, 211, 255, 0.18), transparent 68%);
+      filter: blur(10px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(69, 211, 255, 0.20);
+      background: rgba(69, 211, 255, 0.08);
+      color: var(--cyan);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.02;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      max-width: 58ch;
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+
+    .status-card {
+      padding: 22px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-chip {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .status-label {
+      font-size: 0.92rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .status-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.03);
+      flex: 0 0 auto;
+    }
+
+    .dot.green { background: var(--green); box-shadow: 0 0 0 6px rgba(33, 208, 122, 0.12); }
+    .dot.red { background: var(--red); box-shadow: 0 0 0 6px rgba(255, 93, 93, 0.12); }
+    .dot.gray { background: #7f90a8; box-shadow: 0 0 0 6px rgba(127, 144, 168, 0.12); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .machine {
+      padding: 22px;
+      position: relative;
+      overflow: hidden;
+      min-height: 220px;
+    }
+
+    .machine::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(69, 211, 255, 0.07), transparent 40%, rgba(33, 208, 122, 0.04));
+      pointer-events: none;
+    }
+
+    .machine-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .machine-name {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      margin-bottom: 6px;
+    }
+
+    .machine-sub {
+      color: var(--muted);
+      font-size: 0.95rem;
+      margin: 0;
+      line-height: 1.5;
+    }
+
+    .big-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 18px;
+      padding: 14px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      font-size: 1.2rem;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .metrics {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .metric .label {
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 6px;
+    }
+
+    .metric .value {
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+
+    .footer-bar {
+      margin-top: 18px;
+      padding: 16px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .connection {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .pulse {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #7f90a8;
+      box-shadow: 0 0 0 0 rgba(127, 144, 168, 0.55);
+    }
+
+    .pulse.live {
+      background: var(--green);
+      box-shadow: 0 0 0 0 rgba(33, 208, 122, 0.55);
+      animation: pulse 1.8s infinite;
+    }
+
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(33, 208, 122, 0.55); }
+      70% { box-shadow: 0 0 0 16px rgba(33, 208, 122, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(33, 208, 122, 0); }
+    }
+
+    .fade-in {
+      animation: fadeIn 0.6s ease both;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .grid,
+      .metrics {
+        grid-template-columns: 1fr;
+      }
+
+      .footer-bar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <article class="panel intro fade-in">
+        <div class="eyebrow">Trackny · estado en tiempo real</div>
+        <h1>Monitoreo vivo de máquinas con WebSocket</h1>
+        <p class="subtitle">
+          Esta interfaz escucha el estado del backend y actualiza solo cuando cambia la condición de cada máquina.
+          El video y la detección siguen corriendo en paralelo en el script principal.
+        </p>
+      </article>
+
+      <aside class="panel status-card fade-in">
+        <div class="status-chip">
+          <div>
+            <div class="status-label">Conexión</div>
+            <div class="status-value" id="connectionText">Desconectado</div>
+          </div>
+          <span class="dot gray" id="connectionDot"></span>
+        </div>
+        <div class="status-chip">
+          <div>
+            <div class="status-label">Último mensaje</div>
+            <div class="status-value" id="lastMessage">Sin datos</div>
+          </div>
+          <span class="dot gray"></span>
+        </div>
+      </aside>
+    </section>
+
+    <section class="grid">
+      <article class="panel machine fade-in">
+        <div class="machine-head">
+          <div>
+            <div class="machine-name">Máquina 1</div>
+            <p class="machine-sub">Estado emitido por el backend cuando cambia la ocupación.</p>
+          </div>
+          <span class="dot gray" id="dotM1"></span>
+        </div>
+        <div class="big-state" id="stateM1">Desconocido</div>
+        <div class="metrics">
+          <div class="metric">
+            <div class="label">Valor WebSocket</div>
+            <div class="value" id="valueM1">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Interpretación</div>
+            <div class="value" id="textM1">Esperando conexión</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel machine fade-in">
+        <div class="machine-head">
+          <div>
+            <div class="machine-name">Máquina 2</div>
+            <p class="machine-sub">Se actualiza únicamente cuando el estado cambia para evitar spam.</p>
+          </div>
+          <span class="dot gray" id="dotM2"></span>
+        </div>
+        <div class="big-state" id="stateM2">Desconocido</div>
+        <div class="metrics">
+          <div class="metric">
+            <div class="label">Valor WebSocket</div>
+            <div class="value" id="valueM2">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Interpretación</div>
+            <div class="value" id="textM2">Esperando conexión</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel footer-bar fade-in">
+      <div class="connection">
+        <span class="pulse" id="pulse"></span>
+        <span id="wsUrl">ws://localhost:8000/ws</span>
+      </div>
+      <div id="statusNote">Listo para recibir actualizaciones en tiempo real.</div>
+    </section>
+  </main>
+
+  <script>
+    const wsUrl = `ws://${location.host}/ws`;
+    const connectionText = document.getElementById('connectionText');
+    const connectionDot = document.getElementById('connectionDot');
+    const pulse = document.getElementById('pulse');
+    const lastMessage = document.getElementById('lastMessage');
+    const statusNote = document.getElementById('statusNote');
+    const wsUrlLabel = document.getElementById('wsUrl');
+
+    const stateM1 = document.getElementById('stateM1');
+    const stateM2 = document.getElementById('stateM2');
+    const dotM1 = document.getElementById('dotM1');
+    const dotM2 = document.getElementById('dotM2');
+    const valueM1 = document.getElementById('valueM1');
+    const valueM2 = document.getElementById('valueM2');
+    const textM1 = document.getElementById('textM1');
+    const textM2 = document.getElementById('textM2');
+
+    wsUrlLabel.textContent = wsUrl;
+
+    function setMachineState(index, value) {
+      const occupied = Number(value) === 1;
+      const stateText = occupied ? 'OCUPADA' : 'DESOCUPADA';
+      const colorClass = occupied ? 'red' : 'green';
+
+      if (index === 1) {
+        stateM1.textContent = stateText;
+        valueM1.textContent = String(value);
+        textM1.textContent = occupied ? 'Hay actividad detectada' : 'Libre';
+        dotM1.className = `dot ${colorClass}`;
+      } else {
+        stateM2.textContent = stateText;
+        valueM2.textContent = String(value);
+        textM2.textContent = occupied ? 'Hay actividad detectada' : 'Libre';
+        dotM2.className = `dot ${colorClass}`;
+      }
+    }
+
+    function setConnection(connected) {
+      connectionText.textContent = connected ? 'Conectado' : 'Desconectado';
+      connectionDot.className = connected ? 'dot green' : 'dot gray';
+      pulse.className = connected ? 'pulse live' : 'pulse';
+      statusNote.textContent = connected ? 'Recibiendo estados desde el backend.' : 'Intentando reconectar.';
+    }
+
+    let socket;
+    let reconnectTimer;
+
+    function connect() {
+      clearTimeout(reconnectTimer);
+      socket = new WebSocket(wsUrl);
+
+      socket.addEventListener('open', () => {
+        setConnection(true);
+      });
+
+      socket.addEventListener('message', (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (Object.prototype.hasOwnProperty.call(data, 'maquina1')) {
+            setMachineState(1, data.maquina1);
+          }
+          if (Object.prototype.hasOwnProperty.call(data, 'maquina2')) {
+            setMachineState(2, data.maquina2);
+          }
+          lastMessage.textContent = new Date().toLocaleTimeString();
+        } catch (error) {
+          console.error('Mensaje inválido', error);
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        setConnection(false);
+        reconnectTimer = setTimeout(connect, 1500);
+      });
+
+      socket.addEventListener('error', () => {
+        socket.close();
+      });
+    }
+
+    connect();
+  </script>
+</body>
+</html>

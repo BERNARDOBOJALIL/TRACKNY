@@ -1,6 +1,76 @@
+import asyncio
 import cv2
 import time
+import threading
+from typing import Optional
+from pathlib import Path
+
+import uvicorn
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from ultralytics import YOLO
+
+# =========================
+# FastAPI / WebSockets
+# =========================
+app = FastAPI()
+clientes_conectados = set()
+server_loop: Optional[asyncio.AbstractEventLoop] = None
+frontend_path = Path(__file__).with_name("index.html")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def home() -> HTMLResponse:
+    if frontend_path.exists():
+        return HTMLResponse(frontend_path.read_text(encoding="utf-8"))
+
+    return HTMLResponse(
+        "<html><body><h1>Frontend no encontrado</h1><p>Falta index.html.</p></body></html>"
+    )
+
+
+@app.on_event("startup")
+async def configurar_event_loop() -> None:
+    global server_loop
+    server_loop = asyncio.get_running_loop()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket) -> None:
+    await websocket.accept()
+    clientes_conectados.add(websocket)
+    print("Cliente conectado")
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        clientes_conectados.discard(websocket)
+        print("Cliente desconectado")
+
+
+async def broadcast(data: dict) -> None:
+    if not clientes_conectados:
+        return
+
+    for cliente in list(clientes_conectados):
+        try:
+            await cliente.send_json(data)
+        except Exception:
+            clientes_conectados.discard(cliente)
+
+
+def enviar_estado_maquinas() -> None:
+    if server_loop is None or not server_loop.is_running():
+        return
+
+    asyncio.run_coroutine_threadsafe(
+        broadcast({"maquina1": int(ocupada_m1), "maquina2": int(ocupada_m2)}),
+        server_loop,
+    )
+
 
 # =========================
 # Cargar modelo YOLO
@@ -40,6 +110,16 @@ tiempo_sin_persona_m2 = 0.0
 ocupada_m2 = False
 
 ultimo_tiempo = time.time()
+estado_anterior_m1 = ocupada_m1
+estado_anterior_m2 = ocupada_m2
+
+
+def iniciar_servidor() -> None:
+    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", access_log=False)
+
+
+servidor_thread = threading.Thread(target=iniciar_servidor, daemon=True)
+servidor_thread.start()
 
 # =========================
 # Loop principal
@@ -159,6 +239,14 @@ while True:
     if ocupada_m2 and tiempo_sin_persona_m2 >= TIEMPO_PARA_DESOCUPAR:
         ocupada_m2 = False
         tiempo_sin_persona_m2 = 0.0
+
+    # =========================
+    # Notificar cambios por WebSocket
+    # =========================
+    if ocupada_m1 != estado_anterior_m1 or ocupada_m2 != estado_anterior_m2:
+        estado_anterior_m1 = ocupada_m1
+        estado_anterior_m2 = ocupada_m2
+        enviar_estado_maquinas()
 
     # =========================
     # Visualización de estado
