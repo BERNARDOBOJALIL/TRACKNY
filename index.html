@@ -382,7 +382,9 @@
   </main>
 
   <script>
-    const wsUrl = `ws://${location.host}/ws`;
+    const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsHost = location.host || '127.0.0.1:8000';
+    const wsUrl = `${wsProtocol}://${wsHost}/ws`;
     const connectionText = document.getElementById('connectionText');
     const connectionDot = document.getElementById('connectionDot');
     const pulse = document.getElementById('pulse');

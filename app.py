@@ -41,6 +41,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     clientes_conectados.add(websocket)
     print("Cliente conectado")
 
+    # Enviar estado actual al conectar para evitar frontend sin datos iniciales.
+    await websocket.send_json({"maquina1": int(ocupada_m1), "maquina2": int(ocupada_m2)})
+
     try:
         while True:
             await websocket.receive_text()
