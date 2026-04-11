@@ -37,6 +37,12 @@ Esta implementación actual es un prototipo funcional que demuestra las capacida
 - Texto escalable según resolución de pantalla
 - Fondos semitransparentes para mejor legibilidad
 
+### Persistencia de tiempo ocupado (MongoDB Atlas)
+- Guarda segundos de ocupación por máquina de forma acumulada
+- Usa escritura por lotes para bajo consumo de base de datos
+- No escribe por frame; acumula en memoria y hace flush periódico
+- Modelo diario por máquina (clave única: fecha + machine_id)
+
 ## Requisitos
 
 ### Hardware
@@ -72,6 +78,11 @@ source venv/bin/activate
 pip install opencv-python ultralytics
 ```
 
+Si usarás persistencia en Atlas, instala también:
+```bash
+pip install pymongo
+```
+
 5. Descargar el modelo YOLO:
    - Asegúrate de tener el archivo del modelo YOLO (`yolo26n.pt`)
    - Si no lo tienes, el sistema intentará descargarlo automáticamente (requiere conexión a internet)
@@ -81,6 +92,28 @@ pip install opencv-python ultralytics
 Ejecutar el script principal:
 ```bash
 python app.py
+```
+
+### Variables de entorno para MongoDB Atlas (opcional)
+
+Si no defines `MONGO_URI`, la app funciona igual pero sin persistencia en base de datos.
+
+```bash
+export MONGO_URI="mongodb+srv://usuario:password@cluster.mongodb.net/?retryWrites=true&w=majority"
+export MONGO_DB_NAME="trackny"
+export MONGO_COLLECTION="occupancy_daily"
+export MONGO_FLUSH_INTERVAL="86400"
+```
+
+- `MONGO_URI`: cadena de conexión de Atlas
+- `MONGO_DB_NAME`: base de datos (default: `trackny`)
+- `MONGO_COLLECTION`: colección de acumulados diarios (default: `occupancy_daily`)
+- `MONGO_FLUSH_INTERVAL`: segundos entre escrituras por lote (default: `86400`, 24h)
+
+Endpoint para consultar acumulado del día (UTC):
+
+```bash
+GET /api/ocupacion/hoy
 ```
 
 ### Controles

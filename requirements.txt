@@ -35,3 +35,5 @@ ultralytics==8.4.9
 ultralytics-thop==2.0.18
 uvicorn[standard]==0.34.0
 urllib3==2.6.3
+pymongo==4.13.2
+python-dotenv==1.1.1

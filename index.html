@@ -347,6 +347,14 @@
             <div class="label">Interpretación</div>
             <div class="value" id="textM1">Esperando conexión</div>
           </div>
+          <div class="metric">
+            <div class="label">Tiempo ocupado hoy</div>
+            <div class="value" id="savedM1">--:--:--</div>
+          </div>
+          <div class="metric">
+            <div class="label">Segundos guardados</div>
+            <div class="value" id="savedM1Raw">-</div>
+          </div>
         </div>
       </article>
 
@@ -367,6 +375,14 @@
           <div class="metric">
             <div class="label">Interpretación</div>
             <div class="value" id="textM2">Esperando conexión</div>
+          </div>
+          <div class="metric">
+            <div class="label">Tiempo ocupado hoy</div>
+            <div class="value" id="savedM2">--:--:--</div>
+          </div>
+          <div class="metric">
+            <div class="label">Segundos guardados</div>
+            <div class="value" id="savedM2Raw">-</div>
           </div>
         </div>
       </article>
@@ -400,8 +416,43 @@
     const valueM2 = document.getElementById('valueM2');
     const textM1 = document.getElementById('textM1');
     const textM2 = document.getElementById('textM2');
+    const savedM1 = document.getElementById('savedM1');
+    const savedM2 = document.getElementById('savedM2');
+    const savedM1Raw = document.getElementById('savedM1Raw');
+    const savedM2Raw = document.getElementById('savedM2Raw');
 
     wsUrlLabel.textContent = wsUrl;
+
+    function formatDuration(totalSeconds) {
+      const clampedSeconds = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+      const hours = Math.floor(clampedSeconds / 3600);
+      const minutes = Math.floor((clampedSeconds % 3600) / 60);
+      const seconds = clampedSeconds % 60;
+
+      return [hours, minutes, seconds]
+        .map((part) => String(part).padStart(2, '0'))
+        .join(':');
+    }
+
+    async function refreshSavedTimes() {
+      try {
+        const response = await fetch('/api/ocupacion/hoy', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const s1 = Number(data.maquina1_segundos || 0);
+        const s2 = Number(data.maquina2_segundos || 0);
+
+        savedM1.textContent = formatDuration(s1);
+        savedM2.textContent = formatDuration(s2);
+        savedM1Raw.textContent = `${s1.toFixed(2)} s`;
+        savedM2Raw.textContent = `${s2.toFixed(2)} s`;
+      } catch (error) {
+        console.error('No se pudieron cargar tiempos guardados', error);
+      }
+    }
 
     function setMachineState(index, value) {
       const occupied = Number(value) === 1;
@@ -465,6 +516,8 @@
     }
 
     connect();
+    refreshSavedTimes();
+    setInterval(refreshSavedTimes, 5000);
   </script>
 </body>
 </html>

@@ -2,12 +2,16 @@ import asyncio
 import cv2
 import time
 import threading
+import os
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from dotenv import load_dotenv
+from pymongo import MongoClient, UpdateOne
 from ultralytics import YOLO
 
 # =========================
@@ -17,6 +21,178 @@ app = FastAPI()
 clientes_conectados = set()
 server_loop: Optional[asyncio.AbstractEventLoop] = None
 frontend_path = Path(__file__).with_name("index.html")
+
+# Cargar variables locales desde .env si existe.
+load_dotenv(Path(__file__).with_name(".env"))
+
+
+class MongoOccupancyStore:
+    def __init__(self, uri: str, db_name: str, collection_name: str, flush_interval: float = 86400.0) -> None:
+        self.enabled = bool(uri)
+        self.flush_interval = max(60.0, flush_interval)
+        self._lock = threading.Lock()
+        self._pending_by_day: dict[str, dict[str, float]] = {}
+        self._stop_event = threading.Event()
+        self._flush_thread: Optional[threading.Thread] = None
+        self._client: Optional[MongoClient] = None
+        self._collection = None
+
+        if not self.enabled:
+            print("MongoDB desactivado: define MONGO_URI para persistir tiempos de ocupacion.")
+            return
+
+        try:
+            self._client = MongoClient(uri, serverSelectionTimeoutMS=4000, retryWrites=True)
+            self._client.admin.command("ping")
+            self._collection = self._client[db_name][collection_name]
+            self._collection.create_index([("date", 1), ("machine_id", 1)], unique=True)
+
+            self._flush_thread = threading.Thread(target=self._flush_loop, daemon=True)
+            self._flush_thread.start()
+            print(f"MongoDB activo: {db_name}.{collection_name} | flush cada {self.flush_interval:.0f}s")
+        except Exception as exc:
+            print(f"No se pudo conectar a MongoDB Atlas: {exc}")
+            self.enabled = False
+            if self._client is not None:
+                self._client.close()
+                self._client = None
+            self._collection = None
+
+    @staticmethod
+    def _current_day_utc() -> str:
+        return datetime.now(timezone.utc).date().isoformat()
+
+    @staticmethod
+    def _day_start_timestamp_utc(ts: float) -> float:
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        day_start = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        return day_start.timestamp()
+
+    def _add_pending_seconds(self, day_utc: str, machine_id: str, seconds: float) -> None:
+        if seconds <= 0:
+            return
+
+        if day_utc not in self._pending_by_day:
+            self._pending_by_day[day_utc] = {"maquina1": 0.0, "maquina2": 0.0}
+
+        self._pending_by_day[day_utc][machine_id] += seconds
+
+    def add_interval(self, machine_id: str, start_ts: float, end_ts: float) -> None:
+        if machine_id not in ("maquina1", "maquina2"):
+            return
+
+        if end_ts <= start_ts:
+            return
+
+        start_cursor = start_ts
+
+        with self._lock:
+            # Divide intervalos que cruzan medianoche UTC para mantener agregados diarios correctos.
+            while start_cursor < end_ts:
+                day_start = self._day_start_timestamp_utc(start_cursor)
+                next_day_start = day_start + timedelta(days=1).total_seconds()
+                chunk_end = min(end_ts, next_day_start)
+
+                day_utc = datetime.fromtimestamp(start_cursor, tz=timezone.utc).date().isoformat()
+                self._add_pending_seconds(day_utc, machine_id, chunk_end - start_cursor)
+                start_cursor = chunk_end
+
+    def flush(self, force: bool = False) -> None:
+        if not self.enabled or self._collection is None:
+            return
+
+        with self._lock:
+            pending_by_day = {
+                day: dict(values)
+                for day, values in self._pending_by_day.items()
+            }
+
+            if not force and not pending_by_day:
+                return
+
+            self._pending_by_day = {}
+
+        now_utc = datetime.now(timezone.utc)
+        ops = []
+
+        for day_utc, machine_values in pending_by_day.items():
+            for machine_id, seconds in machine_values.items():
+                rounded_seconds = round(seconds, 2)
+                if rounded_seconds <= 0:
+                    continue
+
+                ops.append(
+                    UpdateOne(
+                        {"date": day_utc, "machine_id": machine_id},
+                        {
+                            "$inc": {"occupied_seconds": rounded_seconds},
+                            "$set": {"updated_at": now_utc},
+                            "$setOnInsert": {"created_at": now_utc},
+                        },
+                        upsert=True,
+                    )
+                )
+
+        if not ops:
+            return
+
+        try:
+            self._collection.bulk_write(ops, ordered=False)
+        except Exception as exc:
+            print(f"Error al guardar ocupacion en MongoDB: {exc}")
+            # Reponer acumulado local para intentar en el siguiente flush.
+            with self._lock:
+                for day_utc, machine_values in pending_by_day.items():
+                    if day_utc not in self._pending_by_day:
+                        self._pending_by_day[day_utc] = {"maquina1": 0.0, "maquina2": 0.0}
+                    for machine_id, seconds in machine_values.items():
+                        self._pending_by_day[day_utc][machine_id] += seconds
+
+    def _flush_loop(self) -> None:
+        while not self._stop_event.wait(self.flush_interval):
+            self.flush()
+
+    def get_today_totals(self) -> dict:
+        totals = {"maquina1": 0.0, "maquina2": 0.0}
+        today_utc = self._current_day_utc()
+
+        if self.enabled and self._collection is not None:
+            docs = self._collection.find(
+                {"date": today_utc},
+                {"_id": 0, "machine_id": 1, "occupied_seconds": 1},
+            )
+            for doc in docs:
+                machine_id = doc.get("machine_id")
+                if machine_id in totals:
+                    totals[machine_id] = float(doc.get("occupied_seconds", 0.0))
+
+        with self._lock:
+            today_pending = self._pending_by_day.get(today_utc, {"maquina1": 0.0, "maquina2": 0.0})
+            totals["maquina1"] += today_pending["maquina1"]
+            totals["maquina2"] += today_pending["maquina2"]
+
+        return totals
+
+    def close(self) -> None:
+        if not self.enabled:
+            return
+
+        self._stop_event.set()
+        if self._flush_thread is not None and self._flush_thread.is_alive():
+            self._flush_thread.join(timeout=2.0)
+
+        self.flush(force=True)
+
+        if self._client is not None:
+            self._client.close()
+
+
+mongo_store = MongoOccupancyStore(
+    uri=os.getenv("MONGO_URI", ""),
+    db_name=os.getenv("MONGO_DB_NAME", "trackny"),
+    collection_name=os.getenv("MONGO_COLLECTION", "occupancy_daily"),
+    flush_interval=float(os.getenv("MONGO_FLUSH_INTERVAL", "86400")),
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -52,6 +228,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         clientes_conectados.discard(websocket)
         print("Cliente desconectado")
+
+
+@app.get("/api/ocupacion/hoy")
+async def ocupacion_hoy() -> dict:
+    totals = mongo_store.get_today_totals()
+    ahora_ts = time.time()
+
+    if inicio_ocupacion_m1 is not None:
+        totals["maquina1"] += max(0.0, ahora_ts - inicio_ocupacion_m1)
+    if inicio_ocupacion_m2 is not None:
+        totals["maquina2"] += max(0.0, ahora_ts - inicio_ocupacion_m2)
+
+    return {
+        "persistencia_activa": mongo_store.enabled,
+        "fecha_utc": datetime.now(timezone.utc).date().isoformat(),
+        "maquina1_segundos": round(totals["maquina1"], 2),
+        "maquina2_segundos": round(totals["maquina2"], 2),
+    }
 
 
 async def broadcast(data: dict) -> None:
@@ -115,6 +309,8 @@ ocupada_m2 = False
 ultimo_tiempo = time.time()
 estado_anterior_m1 = ocupada_m1
 estado_anterior_m2 = ocupada_m2
+inicio_ocupacion_m1: Optional[float] = None
+inicio_ocupacion_m2: Optional[float] = None
 
 
 def iniciar_servidor() -> None:
@@ -243,6 +439,19 @@ while True:
         ocupada_m2 = False
         tiempo_sin_persona_m2 = 0.0
 
+    # Registra intervalos de ocupacion en memoria local.
+    if ocupada_m1 and inicio_ocupacion_m1 is None:
+        inicio_ocupacion_m1 = ahora
+    elif not ocupada_m1 and inicio_ocupacion_m1 is not None:
+        mongo_store.add_interval("maquina1", inicio_ocupacion_m1, ahora)
+        inicio_ocupacion_m1 = None
+
+    if ocupada_m2 and inicio_ocupacion_m2 is None:
+        inicio_ocupacion_m2 = ahora
+    elif not ocupada_m2 and inicio_ocupacion_m2 is not None:
+        mongo_store.add_interval("maquina2", inicio_ocupacion_m2, ahora)
+        inicio_ocupacion_m2 = None
+
     # =========================
     # Notificar cambios por WebSocket
     # =========================
@@ -331,3 +540,11 @@ while True:
 # =========================
 cap.release()
 cv2.destroyAllWindows()
+
+fin_ts = time.time()
+if inicio_ocupacion_m1 is not None:
+    mongo_store.add_interval("maquina1", inicio_ocupacion_m1, fin_ts)
+if inicio_ocupacion_m2 is not None:
+    mongo_store.add_interval("maquina2", inicio_ocupacion_m2, fin_ts)
+
+mongo_store.close()
