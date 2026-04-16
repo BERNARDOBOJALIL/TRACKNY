@@ -52,7 +52,6 @@ runs/
 *.cache
 
 # Videos y capturas de prueba
-*.mp4
 *.avi
 *.mov
 *.mkv

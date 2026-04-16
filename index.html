@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Trackny | Estado en tiempo real</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap');
+
     :root {
       --bg: #07111f;
       --bg-2: #0d1b2d;
@@ -23,7 +25,7 @@
     html, body {
       margin: 0;
       min-height: 100%;
-      font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+      font-family: "Space Grotesk", "Trebuchet MS", sans-serif;
       color: var(--text);
       background:
         radial-gradient(circle at top left, rgba(69, 211, 255, 0.22), transparent 28%),
@@ -164,6 +166,12 @@
       position: relative;
       overflow: hidden;
       min-height: 220px;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .machine:hover {
+      transform: translateY(-3px);
+      border-color: rgba(255, 255, 255, 0.2);
     }
 
     .machine::before {
@@ -172,6 +180,16 @@
       inset: 0;
       background: linear-gradient(135deg, rgba(69, 211, 255, 0.07), transparent 40%, rgba(33, 208, 122, 0.04));
       pointer-events: none;
+    }
+
+    .machine[data-state="ocupada"] {
+      border-color: rgba(255, 93, 93, 0.35);
+      box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.15), var(--shadow);
+    }
+
+    .machine[data-state="libre"] {
+      border-color: rgba(33, 208, 122, 0.28);
+      box-shadow: 0 0 0 1px rgba(33, 208, 122, 0.12), var(--shadow);
     }
 
     .machine-head {
@@ -234,6 +252,15 @@
     .metric .value {
       font-size: 1.15rem;
       font-weight: 700;
+    }
+
+    .empty-state {
+      padding: 24px;
+      text-align: center;
+      color: var(--muted);
+      border-radius: 18px;
+      border: 1px dashed rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.03);
     }
 
     .footer-bar {
@@ -320,72 +347,16 @@
         </div>
         <div class="status-chip">
           <div>
-            <div class="status-label">Último mensaje</div>
-            <div class="status-value" id="lastMessage">Sin datos</div>
+            <div class="status-label">Máquinas activas</div>
+            <div class="status-value" id="activeCount">0</div>
           </div>
-          <span class="dot gray"></span>
+          <span class="dot gray" id="activeDot"></span>
         </div>
       </aside>
     </section>
 
-    <section class="grid">
-      <article class="panel machine fade-in">
-        <div class="machine-head">
-          <div>
-            <div class="machine-name">Máquina 1</div>
-            <p class="machine-sub">Estado emitido por el backend cuando cambia la ocupación.</p>
-          </div>
-          <span class="dot gray" id="dotM1"></span>
-        </div>
-        <div class="big-state" id="stateM1">Desconocido</div>
-        <div class="metrics">
-          <div class="metric">
-            <div class="label">Valor WebSocket</div>
-            <div class="value" id="valueM1">-</div>
-          </div>
-          <div class="metric">
-            <div class="label">Interpretación</div>
-            <div class="value" id="textM1">Esperando conexión</div>
-          </div>
-          <div class="metric">
-            <div class="label">Tiempo ocupado hoy</div>
-            <div class="value" id="savedM1">--:--:--</div>
-          </div>
-          <div class="metric">
-            <div class="label">Segundos guardados</div>
-            <div class="value" id="savedM1Raw">-</div>
-          </div>
-        </div>
-      </article>
-
-      <article class="panel machine fade-in">
-        <div class="machine-head">
-          <div>
-            <div class="machine-name">Máquina 2</div>
-            <p class="machine-sub">Se actualiza únicamente cuando el estado cambia para evitar spam.</p>
-          </div>
-          <span class="dot gray" id="dotM2"></span>
-        </div>
-        <div class="big-state" id="stateM2">Desconocido</div>
-        <div class="metrics">
-          <div class="metric">
-            <div class="label">Valor WebSocket</div>
-            <div class="value" id="valueM2">-</div>
-          </div>
-          <div class="metric">
-            <div class="label">Interpretación</div>
-            <div class="value" id="textM2">Esperando conexión</div>
-          </div>
-          <div class="metric">
-            <div class="label">Tiempo ocupado hoy</div>
-            <div class="value" id="savedM2">--:--:--</div>
-          </div>
-          <div class="metric">
-            <div class="label">Segundos guardados</div>
-            <div class="value" id="savedM2Raw">-</div>
-          </div>
-        </div>
-      </article>
+    <section class="grid" id="machinesGrid">
+      <div class="empty-state">Esperando datos de zonas...</div>
     </section>
 
     <section class="panel footer-bar fade-in">
@@ -404,22 +375,15 @@
     const connectionText = document.getElementById('connectionText');
     const connectionDot = document.getElementById('connectionDot');
     const pulse = document.getElementById('pulse');
-    const lastMessage = document.getElementById('lastMessage');
+    const activeCount = document.getElementById('activeCount');
+    const activeDot = document.getElementById('activeDot');
     const statusNote = document.getElementById('statusNote');
     const wsUrlLabel = document.getElementById('wsUrl');
+    const machinesGrid = document.getElementById('machinesGrid');
 
-    const stateM1 = document.getElementById('stateM1');
-    const stateM2 = document.getElementById('stateM2');
-    const dotM1 = document.getElementById('dotM1');
-    const dotM2 = document.getElementById('dotM2');
-    const valueM1 = document.getElementById('valueM1');
-    const valueM2 = document.getElementById('valueM2');
-    const textM1 = document.getElementById('textM1');
-    const textM2 = document.getElementById('textM2');
-    const savedM1 = document.getElementById('savedM1');
-    const savedM2 = document.getElementById('savedM2');
-    const savedM1Raw = document.getElementById('savedM1Raw');
-    const savedM2Raw = document.getElementById('savedM2Raw');
+    const zoneState = {};
+    const zoneSeconds = {};
+    const zoneCards = new Map();
 
     wsUrlLabel.textContent = wsUrl;
 
@@ -434,6 +398,104 @@
         .join(':');
     }
 
+    function displayName(zoneName) {
+      const match = zoneName.match(/^(zona|maquina)(\d+)$/i);
+      if (match) {
+        return `Máquina ${match[2]}`;
+      }
+      return zoneName.charAt(0).toUpperCase() + zoneName.slice(1);
+    }
+
+    function ensureCard(zoneName) {
+      if (zoneCards.has(zoneName)) {
+        return zoneCards.get(zoneName);
+      }
+
+      if (machinesGrid.querySelector('.empty-state')) {
+        machinesGrid.innerHTML = '';
+      }
+
+      const article = document.createElement('article');
+      article.className = 'panel machine fade-in';
+      article.dataset.state = 'unknown';
+      article.innerHTML = `
+        <div class="machine-head">
+          <div>
+            <div class="machine-name">${displayName(zoneName)}</div>
+            <p class="machine-sub">${zoneName} · estado emitido en vivo por el backend.</p>
+          </div>
+          <span class="dot gray" data-role="dot"></span>
+        </div>
+        <div class="big-state" data-role="state">DESCONOCIDA</div>
+        <div class="metrics">
+          <div class="metric">
+            <div class="label">Valor WebSocket</div>
+            <div class="value" data-role="value">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Interpretación</div>
+            <div class="value" data-role="text">Esperando conexión</div>
+          </div>
+          <div class="metric">
+            <div class="label">Tiempo ocupado hoy</div>
+            <div class="value" data-role="saved">--:--:--</div>
+          </div>
+          <div class="metric">
+            <div class="label">Segundos guardados</div>
+            <div class="value" data-role="savedRaw">-</div>
+          </div>
+        </div>
+      `;
+      machinesGrid.appendChild(article);
+
+      const refs = {
+        root: article,
+        dot: article.querySelector('[data-role="dot"]'),
+        state: article.querySelector('[data-role="state"]'),
+        value: article.querySelector('[data-role="value"]'),
+        text: article.querySelector('[data-role="text"]'),
+        saved: article.querySelector('[data-role="saved"]'),
+        savedRaw: article.querySelector('[data-role="savedRaw"]'),
+      };
+
+      zoneCards.set(zoneName, refs);
+      return refs;
+    }
+
+    function renderCard(zoneName) {
+      const refs = ensureCard(zoneName);
+      const value = zoneState[zoneName];
+      const hasValue = value === 0 || value === 1;
+      const occupied = Number(value) === 1;
+      const secs = Number(zoneSeconds[zoneName] || 0);
+
+      refs.state.textContent = hasValue ? (occupied ? 'OCUPADA' : 'DESOCUPADA') : 'DESCONOCIDA';
+      refs.value.textContent = hasValue ? String(value) : '-';
+      refs.text.textContent = hasValue ? (occupied ? 'Hay actividad detectada' : 'Libre') : 'Sin datos aún';
+      refs.dot.className = `dot ${hasValue ? (occupied ? 'red' : 'green') : 'gray'}`;
+      refs.saved.textContent = formatDuration(secs);
+      refs.savedRaw.textContent = `${secs.toFixed(2)} s`;
+      refs.root.dataset.state = hasValue ? (occupied ? 'ocupada' : 'libre') : 'unknown';
+    }
+
+    function refreshCards() {
+      const allZones = new Set([...Object.keys(zoneState), ...Object.keys(zoneSeconds)]);
+      const orderedZones = Array.from(allZones).sort((a, b) => a.localeCompare(b, 'es'));
+
+      if (orderedZones.length === 0) {
+        machinesGrid.innerHTML = '<div class="empty-state">Esperando datos de zonas...</div>';
+        zoneCards.clear();
+      } else {
+        for (const zoneName of orderedZones) {
+          renderCard(zoneName);
+        }
+      }
+
+      const active = Object.values(zoneState).filter((v) => Number(v) === 1).length;
+      activeCount.textContent = String(active);
+      activeDot.className = `dot ${active > 0 ? 'red' : 'green'}`;
+    }
+
     async function refreshSavedTimes() {
       try {
         const response = await fetch('/api/ocupacion/hoy', { cache: 'no-store' });
@@ -442,33 +504,18 @@
         }
 
         const data = await response.json();
-        const s1 = Number(data.maquina1_segundos || 0);
-        const s2 = Number(data.maquina2_segundos || 0);
 
-        savedM1.textContent = formatDuration(s1);
-        savedM2.textContent = formatDuration(s2);
-        savedM1Raw.textContent = `${s1.toFixed(2)} s`;
-        savedM2Raw.textContent = `${s2.toFixed(2)} s`;
+        for (const [key, value] of Object.entries(data)) {
+          if (!key.endsWith('_segundos')) {
+            continue;
+          }
+          const zoneName = key.slice(0, -9);
+          zoneSeconds[zoneName] = Number(value || 0);
+        }
+
+        refreshCards();
       } catch (error) {
         console.error('No se pudieron cargar tiempos guardados', error);
-      }
-    }
-
-    function setMachineState(index, value) {
-      const occupied = Number(value) === 1;
-      const stateText = occupied ? 'OCUPADA' : 'DESOCUPADA';
-      const colorClass = occupied ? 'red' : 'green';
-
-      if (index === 1) {
-        stateM1.textContent = stateText;
-        valueM1.textContent = String(value);
-        textM1.textContent = occupied ? 'Hay actividad detectada' : 'Libre';
-        dotM1.className = `dot ${colorClass}`;
-      } else {
-        stateM2.textContent = stateText;
-        valueM2.textContent = String(value);
-        textM2.textContent = occupied ? 'Hay actividad detectada' : 'Libre';
-        dotM2.className = `dot ${colorClass}`;
       }
     }
 
@@ -493,13 +540,13 @@
       socket.addEventListener('message', (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (Object.prototype.hasOwnProperty.call(data, 'maquina1')) {
-            setMachineState(1, data.maquina1);
+
+          for (const [zoneName, value] of Object.entries(data)) {
+            zoneState[zoneName] = Number(value);
           }
-          if (Object.prototype.hasOwnProperty.call(data, 'maquina2')) {
-            setMachineState(2, data.maquina2);
-          }
-          lastMessage.textContent = new Date().toLocaleTimeString();
+
+          refreshCards();
+          statusNote.textContent = `Último mensaje: ${new Date().toLocaleTimeString()}`;
         } catch (error) {
           console.error('Mensaje inválido', error);
         }
