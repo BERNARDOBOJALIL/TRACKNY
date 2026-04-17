@@ -5,7 +5,6 @@ import time
 
 import cv2
 import uvicorn
-import torch
 from ultralytics import YOLO
 
 from .api import APIServer
@@ -80,14 +79,14 @@ def _draw_status_panel(frame, occupancy_state: OccupancyState) -> None:
         )
 
 
-def _process_detections(frame, results, occupancy_state: OccupancyState, coord_scale: float = 1.0) -> dict[str, bool]:
+def _process_detections(frame, results, occupancy_state: OccupancyState) -> dict[str, bool]:
     persona_en = {zone: False for zone in occupancy_state.zone_names}
 
     for box in results.boxes:
         if int(box.cls[0]) != 0:
             continue
 
-        x1, y1, x2, y2 = map(int, (box.xyxy[0] / coord_scale).tolist())
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
@@ -106,17 +105,6 @@ def _process_detections(frame, results, occupancy_state: OccupancyState, coord_s
             persona_en[zona_detectada] = True
 
     return persona_en
-
-
-def _prepare_inference_frame(frame):
-    height, width = frame.shape[:2]
-    max_width = settings.inference_max_width
-    if width <= max_width:
-        return frame, 1.0
-
-    scale = max_width / float(width)
-    resized = cv2.resize(frame, (max_width, max(1, int(height * scale))), interpolation=cv2.INTER_AREA)
-    return resized, scale
 
 
 def run() -> None:
@@ -173,12 +161,6 @@ def run() -> None:
         print("API local desactivada (RUN_LOCAL_API=false).")
 
     model = YOLO(str(settings.model_path))
-    try:
-        model.fuse()
-    except Exception:
-        pass
-
-    use_half = bool(torch.cuda.is_available())
     cap, _, source_fps = open_video_source(BASE_DIR, settings.video_path_env)
     frame_reader = AsyncFrameReader(cap, frame_interval=(1.0 / source_fps) if source_fps > 0 else 0.0)
     frame_reader.start()
@@ -187,13 +169,9 @@ def run() -> None:
     cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     ultimo_tiempo = time.time()
-    inference_index = 0
-    last_persona_en = {zone: False for zone in occupancy_state.zone_names}
-    last_totals_sync = 0.0
-    cached_totals = today_totals()
 
     if remote_publisher.enabled:
-        remote_publisher.push_state(occupancy_state.status_payload(), cached_totals, force=True)
+        remote_publisher.push_state(occupancy_state.status_payload(), today_totals(), force=True)
 
     try:
         while True:
@@ -207,42 +185,16 @@ def run() -> None:
             delta = ahora - ultimo_tiempo
             ultimo_tiempo = ahora
 
-            inference_index += 1
-            should_infer = (inference_index % settings.inference_every_n_frames) == 0
-
-            if should_infer:
-                inference_frame, infer_scale = _prepare_inference_frame(frame)
-                resultados = model.predict(
-                    inference_frame,
-                    verbose=False,
-                    imgsz=settings.yolo_imgsz,
-                    conf=settings.yolo_conf,
-                    max_det=settings.yolo_max_det,
-                    classes=[0],
-                    half=use_half,
-                )[0]
-                persona_en = _process_detections(frame, resultados, occupancy_state, coord_scale=infer_scale)
-                last_persona_en = persona_en
-            else:
-                persona_en = last_persona_en
-
+            resultados = model(frame, verbose=False)[0]
+            persona_en = _process_detections(frame, resultados, occupancy_state)
             _draw_zones(frame, occupancy_state)
 
-            changed = occupancy_state.update(persona_en, delta, ahora, mongo_store)
-
-            if changed:
+            if occupancy_state.update(persona_en, delta, ahora, mongo_store):
                 if settings.run_local_api:
                     api_server.broadcast_status(occupancy_state.status_payload())
-                cached_totals = today_totals()
-                last_totals_sync = ahora
-                remote_publisher.push_state(occupancy_state.status_payload(), cached_totals, force=True)
+                remote_publisher.push_state(occupancy_state.status_payload(), today_totals(), force=True)
             else:
-                if remote_publisher.enabled and (ahora - last_totals_sync) >= settings.remote_state_interval:
-                    cached_totals = today_totals()
-                    last_totals_sync = ahora
-                    remote_publisher.push_state(occupancy_state.status_payload(), cached_totals)
-                else:
-                    remote_publisher.push_state(occupancy_state.status_payload())
+                remote_publisher.push_state(occupancy_state.status_payload(), today_totals())
 
             remote_publisher.push_frame(frame)
 

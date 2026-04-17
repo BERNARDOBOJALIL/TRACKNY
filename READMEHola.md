@@ -129,11 +129,6 @@ export REMOTE_VIDEO_ENABLED="true"
 export REMOTE_VIDEO_FPS="5"
 export REMOTE_JPEG_QUALITY="70"
 export REMOTE_FRAME_MAX_WIDTH="960"
-export INFERENCE_MAX_WIDTH="960"
-export INFERENCE_EVERY_N_FRAMES="2"
-export YOLO_IMGSZ="480"
-export YOLO_CONF="0.25"
-export YOLO_MAX_DET="20"
 ```
 
 - `REMOTE_INGEST_URL`: URL publica de Render, sin slash final.
@@ -142,11 +137,6 @@ export YOLO_MAX_DET="20"
 - `REMOTE_VIDEO_FPS`: baja este valor si quieres menos carga de red y CPU.
 - `REMOTE_JPEG_QUALITY`: ajusta compresion JPEG; menor valor = menos peso.
 - `REMOTE_FRAME_MAX_WIDTH`: reduce el ancho del frame antes de comprimirlo.
-- `INFERENCE_MAX_WIDTH`: reduce el ancho usado por YOLO antes de inferir.
-- `INFERENCE_EVERY_N_FRAMES`: procesa 1 de cada N frames para ganar velocidad.
-- `YOLO_IMGSZ`: tamaño de entrada para YOLO; bajarlo acelera la inferencia.
-- `YOLO_CONF`: umbral de confianza para filtrar detecciones.
-- `YOLO_MAX_DET`: limita cuantas detecciones procesa YOLO por frame.
 
 ### 3) Endpoints internos (ingesta)
 
