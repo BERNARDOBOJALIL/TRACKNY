@@ -5,7 +5,17 @@ import os
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(BASE_DIR / ".env")
+
+env_file_override = os.getenv("ENV_FILE", "").strip()
+if env_file_override:
+    env_path = Path(env_file_override)
+    if not env_path.is_absolute():
+        env_path = BASE_DIR / env_path
+    load_dotenv(env_path, override=False)
+else:
+    # Carga local por defecto y permite configuracion especifica para detector.
+    load_dotenv(BASE_DIR / ".env", override=False)
+    load_dotenv(BASE_DIR / ".env.detector", override=False)
 
 
 @dataclass(frozen=True)

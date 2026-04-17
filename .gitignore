@@ -58,4 +58,5 @@ captures/
 
 # Configuración local
 .env
+.env.detector
 config.local.py
