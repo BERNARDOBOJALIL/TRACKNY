@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: trackny-cloud
+    env: python
+    buildCommand: pip install -r requirements-render.txt
+    startCommand: uvicorn trackny.cloud_app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: INTERNAL_API_TOKEN
+        generateValue: true
+      - key: ALLOW_INSECURE_INTERNAL
+        value: "false"
+      - key: ZONE_NAMES
+        value: "zona1,zona2,zona3,zona4,zona5,zona6"

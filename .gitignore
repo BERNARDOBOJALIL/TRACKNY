@@ -44,8 +44,6 @@ Desktop.ini
 
 # Configuración de Ultralytics
 runs/
-*.yaml
-
 # Archivos temporales
 *.tmp
 *.bak
