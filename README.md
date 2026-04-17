@@ -120,6 +120,124 @@ GET /api/ocupacion/hoy
 - **ESC**: Salir del programa
 - El sistema se ejecuta en pantalla completa automáticamente
 
+## Integrar el WebSocket en tu frontend
+
+El backend expone un WebSocket en:
+
+```text
+ws://127.0.0.1:8000/ws
+```
+
+Si el frontend corre en HTTPS, usa `wss://`.
+
+### Estructura de mensajes
+
+Cada mensaje recibido es un objeto JSON con una clave por zona:
+
+```json
+{
+  "zona1": 0,
+  "zona2": 1,
+  "zona3": 0
+}
+```
+
+- `0` = LIBRE
+- `1` = OCUPADA
+
+### Ejemplo base (JavaScript puro)
+
+```html
+<script>
+  const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsHost = '127.0.0.1:8000'; // Cambia este host en produccion
+  const wsUrl = `${wsProtocol}://${wsHost}/ws`;
+
+  let socket;
+  let reconnectTimer;
+
+  function connect() {
+    socket = new WebSocket(wsUrl);
+
+    socket.onopen = () => {
+      console.log('WebSocket conectado');
+      clearTimeout(reconnectTimer);
+    };
+
+    socket.onmessage = (event) => {
+      const zoneState = JSON.parse(event.data);
+      renderZoneState(zoneState);
+    };
+
+    socket.onclose = () => {
+      console.log('WebSocket desconectado. Reintentando...');
+      reconnectTimer = setTimeout(connect, 2000);
+    };
+
+    socket.onerror = (err) => {
+      console.error('Error WebSocket:', err);
+      socket.close();
+    };
+  }
+
+  function renderZoneState(state) {
+    Object.entries(state).forEach(([zone, value]) => {
+      const element = document.getElementById(zone);
+      if (!element) return;
+      element.textContent = value === 1 ? 'OCUPADA' : 'LIBRE';
+      element.dataset.state = value === 1 ? 'ocupada' : 'libre';
+    });
+  }
+
+  connect();
+</script>
+```
+
+### Ejemplo rapido en React
+
+```jsx
+import { useEffect, useRef, useState } from 'react';
+
+export function useTracknySocket(wsUrl) {
+  const [zones, setZones] = useState({});
+  const retryRef = useRef(null);
+
+  useEffect(() => {
+    let ws;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+
+      ws.onmessage = (event) => {
+        setZones(JSON.parse(event.data));
+      };
+
+      ws.onclose = () => {
+        retryRef.current = setTimeout(connect, 2000);
+      };
+
+      ws.onerror = () => ws.close();
+    };
+
+    connect();
+
+    return () => {
+      if (retryRef.current) clearTimeout(retryRef.current);
+      if (ws && ws.readyState <= 1) ws.close();
+    };
+  }, [wsUrl]);
+
+  return zones;
+}
+```
+
+### Recomendaciones para produccion
+
+- Configura `HOST` y `PORT` por variables de entorno en el backend.
+- Si pones un proxy (Nginx, Caddy, Traefik), habilita upgrade de WebSocket.
+- Usa `wss://` detras de TLS.
+- Implementa reconexion exponencial para evitar saturacion de reintentos.
+
 ## Configuración
 
 Puedes ajustar los siguientes parámetros en el archivo `app.py`:
