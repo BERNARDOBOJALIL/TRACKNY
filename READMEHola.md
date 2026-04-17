@@ -128,11 +128,25 @@ export REMOTE_STATE_INTERVAL="1.0"
 export REMOTE_VIDEO_ENABLED="true"
 export REMOTE_VIDEO_FPS="5"
 export REMOTE_JPEG_QUALITY="70"
+export REMOTE_FRAME_MAX_WIDTH="960"
+export INFERENCE_MAX_WIDTH="960"
+export INFERENCE_EVERY_N_FRAMES="2"
+export YOLO_IMGSZ="480"
+export YOLO_CONF="0.25"
+export YOLO_MAX_DET="20"
 ```
 
 - `REMOTE_INGEST_URL`: URL publica de Render, sin slash final.
 - `RUN_LOCAL_API=false`: desactiva API local en la PC detectora.
 - `REMOTE_VIDEO_ENABLED=true`: publica frames JPEG para visualizacion remota.
+- `REMOTE_VIDEO_FPS`: baja este valor si quieres menos carga de red y CPU.
+- `REMOTE_JPEG_QUALITY`: ajusta compresion JPEG; menor valor = menos peso.
+- `REMOTE_FRAME_MAX_WIDTH`: reduce el ancho del frame antes de comprimirlo.
+- `INFERENCE_MAX_WIDTH`: reduce el ancho usado por YOLO antes de inferir.
+- `INFERENCE_EVERY_N_FRAMES`: procesa 1 de cada N frames para ganar velocidad.
+- `YOLO_IMGSZ`: tamaño de entrada para YOLO; bajarlo acelera la inferencia.
+- `YOLO_CONF`: umbral de confianza para filtrar detecciones.
+- `YOLO_MAX_DET`: limita cuantas detecciones procesa YOLO por frame.
 
 ### 3) Endpoints internos (ingesta)
 
@@ -217,13 +231,97 @@ GET /api/ocupacion/hoy
 
 ## Integrar el WebSocket en tu frontend
 
+## Frontend separado (otro repo o dominio)
+
+Si quieres montar el frontend en otro proyecto (por ejemplo Vite, Next.js o React standalone), esta es la forma recomendada.
+
+### 1) Definir URLs del backend cloud
+
+Usa la URL publica de Render como base:
+
+- HTTP API: `https://trackny.onrender.com`
+- WebSocket: `wss://trackny.onrender.com/ws`
+- Video MJPEG: `https://trackny.onrender.com/api/video/live`
+
+Sugerencia de variables de entorno para el frontend:
+
+```bash
+# Vite
+VITE_TRACKNY_HTTP_URL=https://trackny.onrender.com
+VITE_TRACKNY_WS_URL=wss://trackny.onrender.com/ws
+
+# Next.js
+NEXT_PUBLIC_TRACKNY_HTTP_URL=https://trackny.onrender.com
+NEXT_PUBLIC_TRACKNY_WS_URL=wss://trackny.onrender.com/ws
+```
+
+### 2) Consumir estado en tiempo real (WebSocket)
+
+Cada mensaje llega con esta estructura:
+
+```json
+{
+  "zona1": 0,
+  "zona2": 1,
+  "zona3": 0
+}
+```
+
+- `0` = LIBRE
+- `1` = OCUPADA
+
+### 3) Consumir tiempos acumulados (HTTP)
+
+Haz polling de:
+
+- `GET /api/ocupacion/hoy`
+
+Respuesta ejemplo:
+
+```json
+{
+  "persistencia_activa": false,
+  "fecha_utc": "2026-04-17",
+  "zona1_segundos": 120.5,
+  "zona2_segundos": 11.0
+}
+```
+
+### 4) Mostrar video remoto (opcional)
+
+- Stream continuo: `GET /api/video/live`
+- Snapshot unico: `GET /api/video/snapshot`
+- Estado del stream: `GET /api/video/meta`
+
+En HTML simple:
+
+```html
+<img src="https://tu-servicio.onrender.com/api/video/live" alt="Video remoto" />
+```
+
+### 5) CORS si el frontend vive en otro dominio
+
+Si tu frontend y backend no comparten dominio, los `fetch` a `/api/...` pueden bloquearse por CORS.
+
+Tienes dos caminos:
+
+- Opcion A (recomendada): usar un proxy/BFF en tu frontend (por ejemplo rutas API en Next.js) para que el navegador llame al mismo dominio del frontend.
+- Opcion B: habilitar CORS en el backend cloud para el dominio de tu frontend.
+
+Checklist minimo para que funcione en produccion:
+
+- Frontend usa `wss://` para WebSocket.
+- URL HTTP apunta al mismo servicio cloud donde corre `/api/ocupacion/hoy`.
+- Si hay video, `/api/video/meta` devuelve `available=true`.
+- En detector, `REMOTE_INGEST_URL` e `INTERNAL_API_TOKEN` estan correctos.
+
 El backend expone un WebSocket en:
 
 ```text
-ws://<host>:<port>/ws
+wss://trackny.onrender.com/ws
 ```
 
-Si el frontend corre en HTTPS, usa `wss://`.
+Para desarrollo local, puedes usar `ws://127.0.0.1:8000/ws`.
 
 ### Estructura de mensajes
 
@@ -244,9 +342,7 @@ Cada mensaje recibido es un objeto JSON con una clave por zona:
 
 ```html
 <script>
-  const wsProtocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsHost = '127.0.0.1:8000'; // Cambia este host en produccion
-  const wsUrl = `${wsProtocol}://${wsHost}/ws`;
+  const wsUrl = 'wss://trackny.onrender.com/ws';
 
   let socket;
   let reconnectTimer;
@@ -332,6 +428,7 @@ export function useTracknySocket(wsUrl) {
 - Si pones un proxy (Nginx, Caddy, Traefik), habilita upgrade de WebSocket.
 - Usa `wss://` detras de TLS.
 - Implementa reconexion exponencial para evitar saturacion de reintentos.
+- En local, cambia temporalmente a `ws://127.0.0.1:8000/ws`.
 
 ## Configuración
 

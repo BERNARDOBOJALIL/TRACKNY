@@ -40,6 +40,12 @@ class Settings:
     remote_video_enabled: bool
     remote_video_fps: float
     remote_jpeg_quality: int
+    remote_frame_max_width: int
+    inference_max_width: int
+    inference_every_n_frames: int
+    yolo_imgsz: int
+    yolo_conf: float
+    yolo_max_det: int
 
 
 def _parse_bool(value: str, default: bool = False) -> bool:
@@ -73,4 +79,10 @@ settings = Settings(
     remote_video_enabled=_parse_bool(os.getenv("REMOTE_VIDEO_ENABLED", "false"), default=False),
     remote_video_fps=max(1.0, float(os.getenv("REMOTE_VIDEO_FPS", "5.0"))),
     remote_jpeg_quality=max(40, min(95, int(os.getenv("REMOTE_JPEG_QUALITY", "70")))),
+    remote_frame_max_width=max(320, int(os.getenv("REMOTE_FRAME_MAX_WIDTH", "960"))),
+    inference_max_width=max(320, int(os.getenv("INFERENCE_MAX_WIDTH", "960"))),
+    inference_every_n_frames=max(1, int(os.getenv("INFERENCE_EVERY_N_FRAMES", "2"))),
+    yolo_imgsz=max(320, int(os.getenv("YOLO_IMGSZ", "480"))),
+    yolo_conf=max(0.05, min(0.9, float(os.getenv("YOLO_CONF", "0.25")))),
+    yolo_max_det=max(1, int(os.getenv("YOLO_MAX_DET", "20"))),
 )

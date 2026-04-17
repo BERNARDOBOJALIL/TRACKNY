@@ -55,6 +55,10 @@ class CloudStateStore:
         with self._lock:
             return self.latest_jpeg
 
+    def get_frame_snapshot(self) -> tuple[Optional[bytes], Optional[float]]:
+        with self._lock:
+            return self.latest_jpeg, self.last_frame_ts
+
 
 class CloudAPIServer:
     def __init__(self, frontend_path: Path, zone_names: list[str]) -> None:
@@ -133,14 +137,15 @@ class CloudAPIServer:
 
         @self.app.get("/api/video/meta")
         async def video_meta() -> dict:
+            _, frame_ts = self.store.get_frame_snapshot()
             return {
-                "available": self.store.get_frame() is not None,
-                "last_frame_ts": self.store.last_frame_ts,
+                "available": frame_ts is not None,
+                "last_frame_ts": frame_ts,
             }
 
         @self.app.get("/api/video/snapshot")
         async def video_snapshot() -> Response:
-            frame = self.store.get_frame()
+            frame, _ = self.store.get_frame_snapshot()
             if frame is None:
                 raise HTTPException(status_code=404, detail="No hay frame publicado")
             return Response(content=frame, media_type="image/jpeg")
@@ -148,13 +153,13 @@ class CloudAPIServer:
         @self.app.get("/api/video/live")
         async def video_live() -> StreamingResponse:
             async def frame_generator():
-                last_sent = None
+                last_sent_ts = None
                 while True:
-                    frame = self.store.get_frame()
-                    if frame is not None and frame != last_sent:
-                        last_sent = frame
+                    frame, frame_ts = self.store.get_frame_snapshot()
+                    if frame is not None and frame_ts is not None and frame_ts != last_sent_ts:
+                        last_sent_ts = frame_ts
                         yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-                    await asyncio.sleep(0.12)
+                    await asyncio.sleep(0.05)
 
             return StreamingResponse(
                 frame_generator(),
