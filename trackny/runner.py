@@ -10,6 +10,7 @@ from ultralytics import YOLO
 from .api import APIServer
 from .config import BASE_DIR, settings
 from .frame_reader import AsyncFrameReader
+from .remote_publisher import RemotePublisher
 from .state import OccupancyState
 from .storage import MongoOccupancyStore
 from .video import open_video_source
@@ -134,17 +135,29 @@ def run() -> None:
         is_persistence_enabled=lambda: mongo_store.enabled,
     )
 
-    server_thread = threading.Thread(
-        target=lambda: uvicorn.run(
-            api_server.app,
-            host=settings.host,
-            port=settings.port,
-            log_level="info",
-            access_log=False,
-        ),
-        daemon=True,
+    remote_publisher = RemotePublisher(
+        ingest_url=settings.remote_ingest_url,
+        token=settings.internal_api_token,
+        state_interval=settings.remote_state_interval,
+        video_enabled=settings.remote_video_enabled,
+        video_fps=settings.remote_video_fps,
+        jpeg_quality=settings.remote_jpeg_quality,
     )
-    server_thread.start()
+
+    if settings.run_local_api:
+        server_thread = threading.Thread(
+            target=lambda: uvicorn.run(
+                api_server.app,
+                host=settings.host,
+                port=settings.port,
+                log_level="info",
+                access_log=False,
+            ),
+            daemon=True,
+        )
+        server_thread.start()
+    else:
+        print("API local desactivada (RUN_LOCAL_API=false).")
 
     model = YOLO(str(settings.model_path))
     cap, _, source_fps = open_video_source(BASE_DIR, settings.video_path_env)
@@ -155,6 +168,9 @@ def run() -> None:
     cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     ultimo_tiempo = time.time()
+
+    if remote_publisher.enabled:
+        remote_publisher.push_state(occupancy_state.status_payload(), today_totals(), force=True)
 
     try:
         while True:
@@ -173,7 +189,13 @@ def run() -> None:
             _draw_zones(frame, occupancy_state)
 
             if occupancy_state.update(persona_en, delta, ahora, mongo_store):
-                api_server.broadcast_status(occupancy_state.status_payload())
+                if settings.run_local_api:
+                    api_server.broadcast_status(occupancy_state.status_payload())
+                remote_publisher.push_state(occupancy_state.status_payload(), today_totals(), force=True)
+            else:
+                remote_publisher.push_state(occupancy_state.status_payload(), today_totals())
+
+            remote_publisher.push_frame(frame)
 
             _draw_status_panel(frame, occupancy_state)
             cv2.imshow(WINDOW_NAME, frame)
@@ -181,6 +203,7 @@ def run() -> None:
             if cv2.waitKey(1) & 0xFF == 27:
                 break
     finally:
+        remote_publisher.close()
         frame_reader.stop()
         cap.release()
         cv2.destroyAllWindows()

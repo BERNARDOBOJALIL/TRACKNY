@@ -94,6 +94,82 @@ Ejecutar el script principal:
 python app.py
 ```
 
+## Despliegue recomendado (Render + PC detectora)
+
+La arquitectura recomendada es:
+
+- Render: solo API/WebSocket/frontend (`trackny.cloud_app:app`)
+- PC detectora: YOLO/OpenCV local (`python app.py`) y publica estados/video al cloud
+
+### 1) Desplegar en Render
+
+Este repo ya incluye [render.yaml](render.yaml) y [requirements-render.txt](requirements-render.txt).
+
+En Render:
+
+- Crea un Web Service desde este repositorio.
+- Usa Blueprint (render.yaml) o configura manualmente:
+  - Build Command: `pip install -r requirements-render.txt`
+  - Start Command: `uvicorn trackny.cloud_app:app --host 0.0.0.0 --port $PORT`
+- Define variables de entorno:
+  - `INTERNAL_API_TOKEN` (obligatoria)
+  - `ALLOW_INSECURE_INTERNAL=false`
+  - `ZONE_NAMES=zona1,zona2,zona3,zona4,zona5,zona6`
+
+### 2) Configurar PC detectora para publicar al cloud
+
+En la PC donde corre YOLO/OpenCV, define:
+
+```bash
+export REMOTE_INGEST_URL="https://tu-servicio.onrender.com"
+export INTERNAL_API_TOKEN="tu_token_interno"
+export RUN_LOCAL_API="false"
+export REMOTE_STATE_INTERVAL="1.0"
+export REMOTE_VIDEO_ENABLED="true"
+export REMOTE_VIDEO_FPS="5"
+export REMOTE_JPEG_QUALITY="70"
+```
+
+- `REMOTE_INGEST_URL`: URL publica de Render, sin slash final.
+- `RUN_LOCAL_API=false`: desactiva API local en la PC detectora.
+- `REMOTE_VIDEO_ENABLED=true`: publica frames JPEG para visualizacion remota.
+
+### 3) Endpoints internos (ingesta)
+
+- `POST /internal/state`
+- `POST /internal/frame`
+
+Autenticacion requerida por header:
+
+- `x-internal-token: <INTERNAL_API_TOKEN>`
+
+Ejemplo de envio de estado:
+
+```bash
+curl -X POST "https://tu-servicio.onrender.com/internal/state" \
+  -H "Content-Type: application/json" \
+  -H "x-internal-token: TU_TOKEN" \
+  -d '{"states":{"zona1":1,"zona2":0},"totals_seconds":{"zona1":120.5,"zona2":11.0}}'
+```
+
+Ejemplo de envio de frame JPEG:
+
+```bash
+curl -X POST "https://tu-servicio.onrender.com/internal/frame" \
+  -H "Content-Type: image/jpeg" \
+  -H "x-internal-token: TU_TOKEN" \
+  --data-binary "@frame.jpg"
+```
+
+### 4) Endpoints de consumo remoto
+
+- `GET /ws`: estado de zonas en tiempo real.
+- `GET /api/ocupacion/hoy`: segundos por zona (segun ultima publicacion).
+- `GET /api/video/live`: stream MJPEG (si hay frames publicados).
+- `GET /api/video/snapshot`: ultimo frame JPEG.
+- `GET /api/video/meta`: disponibilidad de video.
+- `GET /healthz`: health check.
+
 ### Variables de entorno para MongoDB Atlas (opcional)
 
 Si no defines `MONGO_URI`, la app funciona igual pero sin persistencia en base de datos.
@@ -110,6 +186,25 @@ export MONGO_FLUSH_INTERVAL="86400"
 - `MONGO_COLLECTION`: colección de acumulados diarios (default: `occupancy_daily`)
 - `MONGO_FLUSH_INTERVAL`: segundos entre escrituras por lote (default: `86400`, 24h)
 
+### Variables de entorno para despliegue publico
+
+Para exponer HTTP y WebSocket fuera de localhost:
+
+```bash
+export HOST="0.0.0.0"
+export PORT="8000"
+```
+
+Tambien se aceptan `APP_HOST` y `APP_PORT` por compatibilidad.
+
+- `HOST`: interfaz de escucha de Uvicorn (usa `0.0.0.0` para acceso externo)
+- `PORT`: puerto de escucha
+
+Si despliegas en una VM o servidor:
+
+- Abre el puerto en firewall/security group.
+- Si usas dominio HTTPS, publica por proxy con TLS y usa `wss://` en frontend.
+
 Endpoint para consultar acumulado del día (UTC):
 
 ```bash
@@ -125,7 +220,7 @@ GET /api/ocupacion/hoy
 El backend expone un WebSocket en:
 
 ```text
-ws://127.0.0.1:8000/ws
+ws://<host>:<port>/ws
 ```
 
 Si el frontend corre en HTTPS, usa `wss://`.

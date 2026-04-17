@@ -274,6 +274,31 @@
       font-size: 0.92rem;
     }
 
+    .video-panel {
+      margin-top: 18px;
+      padding: 18px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .video-wrap {
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(0, 0, 0, 0.35);
+      min-height: 220px;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .video-stream {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
     .connection {
       display: inline-flex;
       align-items: center;
@@ -366,6 +391,14 @@
       </div>
       <div id="statusNote">Listo para recibir actualizaciones en tiempo real.</div>
     </section>
+
+    <section class="panel video-panel fade-in">
+      <div class="status-label">Video remoto (opcional)</div>
+      <div class="video-wrap" id="videoWrap">
+        <span id="videoHint">Sin video publicado</span>
+        <img class="video-stream" id="videoStream" alt="Video en tiempo real" style="display:none;" />
+      </div>
+    </section>
   </main>
 
   <script>
@@ -380,6 +413,8 @@
     const statusNote = document.getElementById('statusNote');
     const wsUrlLabel = document.getElementById('wsUrl');
     const machinesGrid = document.getElementById('machinesGrid');
+    const videoStream = document.getElementById('videoStream');
+    const videoHint = document.getElementById('videoHint');
 
     const zoneState = {};
     const zoneSeconds = {};
@@ -526,6 +561,29 @@
       statusNote.textContent = connected ? 'Recibiendo estados desde el backend.' : 'Intentando reconectar.';
     }
 
+    async function refreshVideoAvailability() {
+      try {
+        const response = await fetch('/api/video/meta', { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const meta = await response.json();
+        if (meta.available) {
+          videoHint.style.display = 'none';
+          videoStream.style.display = 'block';
+          videoStream.src = `/api/video/live?ts=${Date.now()}`;
+        } else {
+          videoStream.style.display = 'none';
+          videoHint.style.display = 'inline';
+          videoHint.textContent = 'Sin video publicado';
+        }
+      } catch (error) {
+        videoStream.style.display = 'none';
+        videoHint.style.display = 'inline';
+        videoHint.textContent = 'Video no disponible';
+      }
+    }
+
     let socket;
     let reconnectTimer;
 
@@ -564,7 +622,9 @@
 
     connect();
     refreshSavedTimes();
+    refreshVideoAvailability();
     setInterval(refreshSavedTimes, 5000);
+    setInterval(refreshVideoAvailability, 6000);
   </script>
 </body>
 </html>
