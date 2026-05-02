@@ -1,253 +1,145 @@
-# Sistema de Detección de Ocupación de Máquinas
+# Trackny - README técnico
 
-## Descripción del Proyecto
+## Qué hace este programa
 
-Este es un **sistema de prueba** para la detección automática del estado de ocupación de máquinas mediante visión por computadora. El proyecto está siendo desarrollado para el **IDIT (Instituto de Diseño e Innovación Tecnológica) de la Universidad Iberoamericana Puebla**.
+Trackny es un sistema de visión por computadora para detectar si ciertas máquinas o áreas de trabajo están ocupadas por una persona en tiempo real. La aplicación principal corre en una PC conectada a una cámara o a un archivo de video, detecta personas con YOLO, decide el estado de cada zona con lógica temporal para evitar falsos positivos, muestra la información en pantalla completa y, opcionalmente, persiste los tiempos ocupados en MongoDB Atlas.
 
-El sistema forma parte de una solución más amplia de **gestión e información** que permitirá a estudiantes, profesores y personal administrativo conocer en tiempo real qué máquinas están disponibles o en uso.
+Además del proceso local, el proyecto también puede publicar el estado y el video hacia un backend remoto hecho con FastAPI. Ese backend expone WebSocket, endpoints HTTP y un stream MJPEG para que otro frontend consuma los datos en tiempo real.
 
-## Estado Actual
+## Arquitectura general
 
-🚧 **VERSIÓN DE PRUEBA** 🚧
+El flujo real del sistema es este:
 
-Esta implementación actual es un prototipo funcional que demuestra las capacidades básicas del sistema:
+1. Se abre una fuente de video con OpenCV.
+2. Un modelo YOLO detecta clases de persona en cada frame.
+3. Cada detección se asocia a una zona poligonal fija.
+4. Se acumula tiempo continuo con persona presente o ausente.
+5. Una zona solo cambia a ocupada o libre cuando supera umbrales temporales.
+6. El estado se dibuja sobre el video y se publica por API local o remota.
+7. Si MongoDB está habilitado, se guardan intervalos de ocupación por día.
 
-- Detección de personas mediante YOLO (YOLOv26)
-- Seguimiento de ocupación en dos zonas independientes
-- Visualización en tiempo real del estado de cada máquina
-- Lógica temporal para evitar falsos positivos
+El proyecto está dividido en dos capas:
 
-## Funcionalidades
+- Detector local: `app.py` en la raíz llama a `trackny.runner.run()`.
+- API cloud: `trackny.cloud_app` expone ingesta remota, WebSocket y video.
 
-### Detección de Ocupación
-- **Dos máquinas independientes**: El sistema monitorea dos zonas separadas (40% izquierda, 40% derecha, con 20% de espacio neutral en el centro)
-- **Detección por presencia**: Utiliza YOLOv26 para detectar personas en tiempo real
-- **Lógica temporal**:
-  - Una máquina se marca como **OCUPADA** después de 10 segundos con una persona presente
-  - Se marca como **DESOCUPADA** después de 5 segundos sin personas
-  - Esto evita cambios de estado por movimientos momentáneos
+## Cómo funciona técnicamente
 
-### Visualización
-- Pantalla completa adaptativa
-- Rectángulos de zonas para identificar cada máquina
-- Información en tiempo real:
-  - Estado actual (OCUPADA/DESOCUPADA)
-  - Tiempo con persona presente
-  - Tiempo sin persona (cuando está ocupada)
-- Texto escalable según resolución de pantalla
-- Fondos semitransparentes para mejor legibilidad
+### 1) Arranque del detector
 
-### Persistencia de tiempo ocupado (MongoDB Atlas)
-- Guarda segundos de ocupación por máquina de forma acumulada
-- Usa escritura por lotes para bajo consumo de base de datos
-- No escribe por frame; acumula en memoria y hace flush periódico
-- Modelo diario por máquina (clave única: fecha + machine_id)
+El punto de entrada local es [app.py](app.py). Ese archivo solo importa `run()` desde el paquete `trackny` y lo ejecuta.
 
-## Requisitos
+La lógica principal vive en [trackny/runner.py](trackny/runner.py). Ahí se inicializa todo el estado del sistema:
 
-### Hardware
-- Cámara web funcional
-- Computadora con capacidad para ejecutar modelos de deep learning
+- Se cargan los nombres de zona desde [trackny/zones.py](trackny/zones.py).
+- Se crea [OccupancyState](trackny/state.py) con los tiempos de ocupación y desocupación.
+- Se crea [MongoOccupancyStore](trackny/storage.py) si existe `MONGO_URI`.
+- Se levanta [APIServer](trackny/api.py) para exponer WebSocket y HTTP local.
+- Se crea [RemotePublisher](trackny/remote_publisher.py) si hay URL remota.
+- Se abre la cámara o un archivo de video con [open_video_source](trackny/video.py).
+- Se carga el modelo YOLO desde `yolo26n.pt`.
 
-### Software
-- Python 3.12
-- OpenCV
-- Ultralytics YOLO
-- Modelo YOLOv26n
+### 2) Fuente de video
 
-## Instalación
+[trackny/video.py](trackny/video.py) intenta abrir primero un archivo de video definido por `VIDEO_PATH`. Si no existe, busca automáticamente un `.mp4`, `.avi`, `.mov` o `.mkv` en la raíz del proyecto. Si no encuentra nada, usa la cámara 0.
 
-1. Clonar o descargar este repositorio
+Cuando la fuente es un video, calcula su FPS para leerlo de forma controlada desde un lector asíncrono.
 
-2. Crear un entorno virtual:
-```bash
-python -m venv venv
-```
+### 3) Detección con YOLO
 
-3. Activar el entorno virtual:
-```bash
-# Windows
-venv\Scripts\activate
+En [trackny/runner.py](trackny/runner.py), el frame se procesa con `model(frame, verbose=False)[0]` usando Ultralytics YOLO.
 
-# Linux/Mac
-source venv/bin/activate
-```
+Luego [_process_detections](trackny/runner.py) recorre las cajas detectadas y filtra solo la clase persona, que en COCO corresponde al índice 0. Para cada caja:
 
-4. Instalar dependencias:
-```bash
-pip install opencv-python ultralytics
-```
+- Se calcula el centro de la detección.
+- Se verifica en qué polígono cae ese centro.
+- Se marca la zona correspondiente como con persona.
+- Se dibuja la caja y una etiqueta visual sobre el frame.
 
-Si usarás persistencia en Atlas, instala también:
-```bash
-pip install pymongo
-```
+La decisión se hace por centroide, no por intersección completa. Eso simplifica el cálculo y hace el sistema más estable para ocupación por presencia humana.
 
-5. Descargar el modelo YOLO:
-   - Asegúrate de tener el archivo del modelo YOLO (`yolo26n.pt`)
-   - Si no lo tienes, el sistema intentará descargarlo automáticamente (requiere conexión a internet)
+### 4) Zonas de detección
 
-## Uso
+Las zonas están definidas como polígonos fijos en [trackny/zones.py](trackny/zones.py). Actualmente hay seis zonas: `zona1` a `zona6`.
 
-Ejecutar el script principal:
-```bash
-python app.py
-```
+No se calculan por porcentajes dinámicos; son coordenadas explícitas sobre la imagen. Eso significa que el sistema está calibrado para una escena concreta y conviene ajustar esas coordenadas si cambia la cámara, la resolución o el encuadre.
 
-## Despliegue recomendado (Render + PC detectora)
+La función `punto_en_zona()` usa `cv2.pointPolygonTest()` para decidir si el centro de la persona está dentro de cada polígono.
 
-La arquitectura recomendada es:
+### 5) Máquina de estados temporal
 
-- Render: solo API/WebSocket/frontend (`trackny.cloud_app:app`)
-- PC detectora: YOLO/OpenCV local (`python app.py`) y publica estados/video al cloud
+[trackny/state.py](trackny/state.py) contiene la lógica que evita cambios bruscos por detecciones momentáneas.
 
-### 1) Desplegar en Render
+Cada zona mantiene estos valores:
 
-Este repo ya incluye [render.yaml](render.yaml) y [requirements-render.txt](requirements-render.txt).
+- `tiempo_con_persona`: segundos acumulados con persona presente.
+- `tiempo_sin_persona`: segundos acumulados sin persona mientras la zona ya está ocupada.
+- `ocupada`: estado binario actual.
+- `inicio_ocupacion`: timestamp en el que comenzó el intervalo actual de ocupación.
 
-En Render:
+La transición funciona así:
 
-- Crea un Web Service desde este repositorio.
-- Usa Blueprint (render.yaml) o configura manualmente:
-  - Build Command: `pip install -r requirements-render.txt`
-  - Start Command: `uvicorn trackny.cloud_app:app --host 0.0.0.0 --port $PORT`
-- Define variables de entorno:
-  - `INTERNAL_API_TOKEN` (obligatoria)
-  - `ALLOW_INSECURE_INTERNAL=false`
-  - `ZONE_NAMES=zona1,zona2,zona3,zona4,zona5,zona6`
+- Si hay persona en la zona, `tiempo_con_persona` sube y `tiempo_sin_persona` se reinicia.
+- Si no hay persona y la zona está ocupada, `tiempo_sin_persona` sube.
+- Si `tiempo_con_persona` supera `TIEMPO_PARA_OCUPAR` el estado pasa a ocupada.
+- Si la zona ocupada acumula más de `TIEMPO_PARA_DESOCUPAR` sin persona, vuelve a libre.
 
-### 2) Configurar PC detectora para publicar al cloud
+Los valores por defecto vienen de [trackny/config.py](trackny/config.py):
 
-En la PC donde corre YOLO/OpenCV, define:
+- `TIEMPO_PARA_OCUPAR = 10`
+- `TIEMPO_PARA_DESOCUPAR = 5`
 
-```bash
-export REMOTE_INGEST_URL="https://tu-servicio.onrender.com"
-export INTERNAL_API_TOKEN="tu_token_interno"
-export RUN_LOCAL_API="false"
-export REMOTE_STATE_INTERVAL="1.0"
-export REMOTE_VIDEO_ENABLED="true"
-export REMOTE_VIDEO_FPS="5"
-export REMOTE_JPEG_QUALITY="70"
-export REMOTE_FRAME_MAX_WIDTH="960"
-```
+### 6) Persistencia de ocupación
 
-- `REMOTE_INGEST_URL`: URL publica de Render, sin slash final.
-- `RUN_LOCAL_API=false`: desactiva API local en la PC detectora.
-- `REMOTE_VIDEO_ENABLED=true`: publica frames JPEG para visualizacion remota.
-- `REMOTE_VIDEO_FPS`: baja este valor si quieres menos carga de red y CPU.
-- `REMOTE_JPEG_QUALITY`: ajusta compresion JPEG; menor valor = menos peso.
-- `REMOTE_FRAME_MAX_WIDTH`: reduce el ancho del frame antes de comprimirlo.
+[trackny/storage.py](trackny/storage.py) guarda intervalos de ocupación en MongoDB Atlas. El diseño no escribe por frame, sino por intervalos completos:
 
-### 3) Endpoints internos (ingesta)
+- Cuando una zona pasa a ocupada, se registra `inicio_ocupacion`.
+- Cuando pasa a libre, se calcula el intervalo completo y se acumula en memoria.
+- Un hilo de flush escribe lotes cada `MONGO_FLUSH_INTERVAL` segundos.
 
-- `POST /internal/state`
-- `POST /internal/frame`
+La colección usa una clave única por `date` y `machine_id`, con un acumulado diario de segundos ocupados. Eso permite sumar tiempo sin perder precisión entre reinicios.
 
-Autenticacion requerida por header:
+Si `MONGO_URI` no está definido, la persistencia queda desactivada y la app sigue funcionando.
 
-- `x-internal-token: <INTERNAL_API_TOKEN>`
+### 7) Visualización en pantalla
 
-Ejemplo de envio de estado:
+El video se dibuja con OpenCV directamente en la ventana `Deteccion de Maquinas`.
 
-```bash
-curl -X POST "https://tu-servicio.onrender.com/internal/state" \
-  -H "Content-Type: application/json" \
-  -H "x-internal-token: TU_TOKEN" \
-  -d '{"states":{"zona1":1,"zona2":0},"totals_seconds":{"zona1":120.5,"zona2":11.0}}'
-```
+El render hace tres cosas principales:
 
-Ejemplo de envio de frame JPEG:
+- Dibuja los contornos de cada zona.
+- Escribe el estado `OCUPADA` o `LIBRE` sobre la escena.
+- Pinta un panel lateral con el estado de todas las zonas.
 
-```bash
-curl -X POST "https://tu-servicio.onrender.com/internal/frame" \
-  -H "Content-Type: image/jpeg" \
-  -H "x-internal-token: TU_TOKEN" \
-  --data-binary "@frame.jpg"
-```
+El programa fuerza pantalla completa con `cv2.WND_PROP_FULLSCREEN`, así que funciona como monitor de planta o terminal de supervisión.
 
-### 4) Endpoints de consumo remoto
+### 8) Publicación remota
 
-- `GET /ws`: estado de zonas en tiempo real.
-- `GET /api/ocupacion/hoy`: segundos por zona (segun ultima publicacion).
-- `GET /api/video/live`: stream MJPEG (si hay frames publicados).
-- `GET /api/video/snapshot`: ultimo frame JPEG.
-- `GET /api/video/meta`: disponibilidad de video.
-- `GET /healthz`: health check.
+[trackny/remote_publisher.py](trackny/remote_publisher.py) permite enviar datos a una instancia cloud.
 
-### Variables de entorno para MongoDB Atlas (opcional)
+Envía dos tipos de payload:
 
-Si no defines `MONGO_URI`, la app funciona igual pero sin persistencia en base de datos.
+- Estado: `POST /internal/state`
+- Frame JPEG: `POST /internal/frame`
 
-```bash
-export MONGO_URI="mongodb+srv://usuario:password@cluster.mongodb.net/?retryWrites=true&w=majority"
-export MONGO_DB_NAME="trackny"
-export MONGO_COLLECTION="occupancy_daily"
-export MONGO_FLUSH_INTERVAL="86400"
-```
+La publicación de estado se limita por `REMOTE_STATE_INTERVAL` para evitar tráfico excesivo. El video, si está habilitado, se comprime a JPEG, se reduce de ancho si supera `REMOTE_FRAME_MAX_WIDTH` y se envía con un FPS configurado por `REMOTE_VIDEO_FPS`.
 
-- `MONGO_URI`: cadena de conexión de Atlas
-- `MONGO_DB_NAME`: base de datos (default: `trackny`)
-- `MONGO_COLLECTION`: colección de acumulados diarios (default: `occupancy_daily`)
-- `MONGO_FLUSH_INTERVAL`: segundos entre escrituras por lote (default: `86400`, 24h)
+La autenticación usa el header `x-internal-token` con el valor de `INTERNAL_API_TOKEN`.
 
-### Variables de entorno para despliegue publico
+## API local
 
-Para exponer HTTP y WebSocket fuera de localhost:
+[trackny/api.py](trackny/api.py) expone la API que usa el detector local cuando `RUN_LOCAL_API=true`.
 
-```bash
-export HOST="0.0.0.0"
-export PORT="8000"
-```
+### Endpoints
 
-Tambien se aceptan `APP_HOST` y `APP_PORT` por compatibilidad.
+- `GET /`
+- `GET /ws`
+- `GET /api/ocupacion/hoy`
+- `GET /api/ocupacion/registros`
 
-- `HOST`: interfaz de escucha de Uvicorn (usa `0.0.0.0` para acceso externo)
-- `PORT`: puerto de escucha
+### WebSocket
 
-Si despliegas en una VM o servidor:
-
-- Abre el puerto en firewall/security group.
-- Si usas dominio HTTPS, publica por proxy con TLS y usa `wss://` en frontend.
-
-Endpoint para consultar acumulado del día (UTC):
-
-```bash
-GET /api/ocupacion/hoy
-```
-
-### Controles
-- **ESC**: Salir del programa
-- El sistema se ejecuta en pantalla completa automáticamente
-
-## Integrar el WebSocket en tu frontend
-
-## Frontend separado (otro repo o dominio)
-
-Si quieres montar el frontend en otro proyecto (por ejemplo Vite, Next.js o React standalone), esta es la forma recomendada.
-
-### 1) Definir URLs del backend cloud
-
-Usa la URL publica de Render como base:
-
-- HTTP API: `https://trackny.onrender.com`
-- WebSocket: `wss://trackny.onrender.com/ws`
-- Video MJPEG: `https://trackny.onrender.com/api/video/live`
-
-Sugerencia de variables de entorno para el frontend:
-
-```bash
-# Vite
-VITE_TRACKNY_HTTP_URL=https://trackny.onrender.com
-VITE_TRACKNY_WS_URL=wss://trackny.onrender.com/ws
-
-# Next.js
-NEXT_PUBLIC_TRACKNY_HTTP_URL=https://trackny.onrender.com
-NEXT_PUBLIC_TRACKNY_WS_URL=wss://trackny.onrender.com/ws
-```
-
-### 2) Consumir estado en tiempo real (WebSocket)
-
-Cada mensaje llega con esta estructura:
+El WebSocket emite un JSON simple con el estado actual de cada zona:
 
 ```json
 {
@@ -257,266 +149,338 @@ Cada mensaje llega con esta estructura:
 }
 ```
 
-- `0` = LIBRE
-- `1` = OCUPADA
+Semántica:
 
-### 3) Consumir tiempos acumulados (HTTP)
+- `0` = libre
+- `1` = ocupada
 
-Haz polling de:
+El servidor mantiene una lista de clientes conectados y hace broadcast cuando cambia el estado.
 
-- `GET /api/ocupacion/hoy`
+### HTTP diario
 
-Respuesta ejemplo:
+`GET /api/ocupacion/hoy` devuelve el total de segundos ocupados por zona para el día UTC actual.
+
+Ejemplo:
 
 ```json
 {
-  "persistencia_activa": false,
-  "fecha_utc": "2026-04-17",
+  "persistencia_activa": true,
+  "fecha_utc": "2026-04-18",
   "zona1_segundos": 120.5,
   "zona2_segundos": 11.0
 }
 ```
 
-### 4) Mostrar video remoto (opcional)
+`GET /api/ocupacion/registros` devuelve todos los documentos guardados en MongoDB para la colección de ocupación.
 
-- Stream continuo: `GET /api/video/live`
-- Snapshot unico: `GET /api/video/snapshot`
-- Estado del stream: `GET /api/video/meta`
+Ejemplo de un elemento de la respuesta:
 
-En HTML simple:
-
-```html
-<img src="https://tu-servicio.onrender.com/api/video/live" alt="Video remoto" />
+```json
+{
+  "_id": "66fb2d4c1a2e8f3c7d9b1234",
+  "date": "2026-04-16",
+  "machine_id": "zona1",
+  "created_at": "2026-04-16T12:34:56.789000Z",
+  "occupied_seconds": 31.91,
+  "updated_at": "2026-04-16T12:35:10.123000Z"
+}
 ```
 
-### 5) CORS si el frontend vive en otro dominio
+## API cloud
 
-Si tu frontend y backend no comparten dominio, los `fetch` a `/api/...` pueden bloquearse por CORS.
+[trackny/cloud_app.py](trackny/cloud_app.py) sirve cuando se quiere separar detector y frontend.
 
-Tienes dos caminos:
+### Endpoints públicos
 
-- Opcion A (recomendada): usar un proxy/BFF en tu frontend (por ejemplo rutas API en Next.js) para que el navegador llame al mismo dominio del frontend.
-- Opcion B: habilitar CORS en el backend cloud para el dominio de tu frontend.
+- `GET /`
+- `GET /ws`
+- `GET /healthz`
+- `GET /api/ocupacion/hoy`
+- `GET /api/video/meta`
+- `GET /api/video/snapshot`
+- `GET /api/video/live`
 
-Checklist minimo para que funcione en produccion:
+### Endpoints internos
 
-- Frontend usa `wss://` para WebSocket.
-- URL HTTP apunta al mismo servicio cloud donde corre `/api/ocupacion/hoy`.
-- Si hay video, `/api/video/meta` devuelve `available=true`.
-- En detector, `REMOTE_INGEST_URL` e `INTERNAL_API_TOKEN` estan correctos.
+- `POST /internal/state`
+- `POST /internal/frame`
 
-El backend expone un WebSocket en:
+El backend cloud mantiene memoria del último estado y del último frame JPEG recibido. No hace detección; solo recibe y redistribuye.
 
-```text
-wss://trackny.onrender.com/ws
+### Seguridad interna
+
+Por defecto, los endpoints internos requieren token. Si `ALLOW_INSECURE_INTERNAL=false` y no hay `INTERNAL_API_TOKEN`, el backend rechaza la ingesta.
+
+Acepta token por:
+
+- Header `x-internal-token`
+- Header `Authorization: Bearer ...`
+
+## Frontend
+
+El archivo [index.html](index.html) es una interfaz estática que se puede servir desde el backend cloud o abrirse con otro frontend que apunte al mismo origen.
+
+Ese frontend hace tres cosas:
+
+- Abre un WebSocket hacia `/ws`.
+- Hace polling a `/api/ocupacion/hoy` para mostrar el tiempo acumulado.
+- Consulta `/api/video/meta` y, si hay video, carga `/api/video/live` como stream MJPEG.
+
+El WebSocket está pensado para actualizaciones instantáneas de estado. El HTTP se usa para métricas acumuladas que no cambian en cada frame.
+
+## Variables de entorno relevantes
+
+Las variables se cargan desde `.env` y `.env.detector` en [trackny/config.py](trackny/config.py).
+
+### Detector local
+
+- `YOLO_MODEL`: ruta del modelo, por defecto `yolo26n.pt`
+- `HOST`: host de la API local, por defecto `0.0.0.0`
+- `PORT`: puerto de la API local, por defecto `8000`
+- `RUN_LOCAL_API`: activa o desactiva la API local
+- `VIDEO_PATH`: archivo de video a usar como fuente
+- `TIEMPO_PARA_OCUPAR`: segundos para marcar como ocupada
+- `TIEMPO_PARA_DESOCUPAR`: segundos para marcar como libre
+- `MONGO_URI`: activa persistencia en MongoDB Atlas
+- `MONGO_DB_NAME`: base de datos destino
+- `MONGO_COLLECTION`: colección destino
+- `MONGO_FLUSH_INTERVAL`: intervalo de flush en segundos
+- `REMOTE_INGEST_URL`: URL del backend cloud
+- `REMOTE_STATE_INTERVAL`: frecuencia mínima de publicación de estado
+- `REMOTE_VIDEO_ENABLED`: activa envío de video
+- `REMOTE_VIDEO_FPS`: FPS de envío remoto
+- `REMOTE_JPEG_QUALITY`: calidad JPEG del frame remoto
+- `REMOTE_FRAME_MAX_WIDTH`: ancho máximo del frame remoto
+- `INTERNAL_API_TOKEN`: token compartido entre detector y cloud
+
+### Backend cloud
+
+- `ALLOW_INSECURE_INTERNAL`: permite ingesta sin token si está en `true`
+- `ZONE_NAMES`: lista separada por comas con los nombres de zonas esperadas
+
+## Instalación
+
+### 1. Crear entorno virtual
+
+```bash
+python -m venv venv
 ```
 
-Para desarrollo local, puedes usar `ws://127.0.0.1:8000/ws`.
+### 2. Activarlo
 
-### Estructura de mensajes
+```bash
+# Windows
+venv\Scripts\activate
 
-Cada mensaje recibido es un objeto JSON con una clave por zona:
+# Linux o macOS
+source venv/bin/activate
+```
+
+### 3. Instalar dependencias
+
+```bash
+pip install -r requirements.txt
+```
+
+Si solo vas a desplegar el backend cloud en Render:
+
+```bash
+pip install -r requirements-render.txt
+```
+
+## Ejecución
+
+### Detector local completo
+
+```bash
+python app.py
+```
+
+Ese comando inicia:
+
+- lectura de video
+- detección YOLO
+- ventana OpenCV
+- API local si `RUN_LOCAL_API=true`
+- publicación remota si `REMOTE_INGEST_URL` está configurado
+
+### Backend cloud por separado
+
+```bash
+uvicorn trackny.cloud_app:app --host 0.0.0.0 --port 8000
+```
+
+## Despliegue recomendado
+
+La arquitectura más estable es esta:
+
+- Una PC local ejecuta el detector YOLO/OpenCV.
+- Un servicio cloud recibe estados y video.
+- Un frontend consulta WebSocket, HTTP y video desde el cloud.
+
+Esto evita cargar la cámara, el modelo y la UI en el mismo hosting.
+
+### Render
+
+El archivo [render.yaml](render.yaml) ya deja el servicio preparado con:
+
+- build con `requirements-render.txt`
+- start con `uvicorn trackny.cloud_app:app --host 0.0.0.0 --port $PORT`
+- `INTERNAL_API_TOKEN` generado automáticamente
+- `ALLOW_INSECURE_INTERNAL=false`
+- `ZONE_NAMES=zona1,zona2,zona3,zona4,zona5,zona6`
+
+## Formato de datos
+
+### Estado por zonas
 
 ```json
 {
   "zona1": 0,
-  "zona2": 1,
-  "zona3": 0
+  "zona2": 1
 }
 ```
 
-- `0` = LIBRE
-- `1` = OCUPADA
+### Totales diarios
 
-### Ejemplo base (JavaScript puro)
-
-```html
-<script>
-  const wsUrl = 'wss://trackny.onrender.com/ws';
-
-  let socket;
-  let reconnectTimer;
-
-  function connect() {
-    socket = new WebSocket(wsUrl);
-
-    socket.onopen = () => {
-      console.log('WebSocket conectado');
-      clearTimeout(reconnectTimer);
-    };
-
-    socket.onmessage = (event) => {
-      const zoneState = JSON.parse(event.data);
-      renderZoneState(zoneState);
-    };
-
-    socket.onclose = () => {
-      console.log('WebSocket desconectado. Reintentando...');
-      reconnectTimer = setTimeout(connect, 2000);
-    };
-
-    socket.onerror = (err) => {
-      console.error('Error WebSocket:', err);
-      socket.close();
-    };
-  }
-
-  function renderZoneState(state) {
-    Object.entries(state).forEach(([zone, value]) => {
-      const element = document.getElementById(zone);
-      if (!element) return;
-      element.textContent = value === 1 ? 'OCUPADA' : 'LIBRE';
-      element.dataset.state = value === 1 ? 'ocupada' : 'libre';
-    });
-  }
-
-  connect();
-</script>
-```
-
-### Ejemplo rapido en React
-
-```jsx
-import { useEffect, useRef, useState } from 'react';
-
-export function useTracknySocket(wsUrl) {
-  const [zones, setZones] = useState({});
-  const retryRef = useRef(null);
-
-  useEffect(() => {
-    let ws;
-
-    const connect = () => {
-      ws = new WebSocket(wsUrl);
-
-      ws.onmessage = (event) => {
-        setZones(JSON.parse(event.data));
-      };
-
-      ws.onclose = () => {
-        retryRef.current = setTimeout(connect, 2000);
-      };
-
-      ws.onerror = () => ws.close();
-    };
-
-    connect();
-
-    return () => {
-      if (retryRef.current) clearTimeout(retryRef.current);
-      if (ws && ws.readyState <= 1) ws.close();
-    };
-  }, [wsUrl]);
-
-  return zones;
+```json
+{
+  "zona1_segundos": 120.5,
+  "zona2_segundos": 11.0
 }
 ```
 
-### Recomendaciones para produccion
+### Frame remoto
 
-- Configura `HOST` y `PORT` por variables de entorno en el backend.
-- Si pones un proxy (Nginx, Caddy, Traefik), habilita upgrade de WebSocket.
-- Usa `wss://` detras de TLS.
-- Implementa reconexion exponencial para evitar saturacion de reintentos.
-- En local, cambia temporalmente a `ws://127.0.0.1:8000/ws`.
+El frame se envía como bytes JPEG puros con `Content-Type: image/jpeg`.
 
-## Configuración
+## Estructura del proyecto
 
-Puedes ajustar los siguientes parámetros en el archivo `app.py`:
-
-```python
-TIEMPO_PARA_OCUPAR = 10      # Segundos con persona para marcar como ocupada
-TIEMPO_PARA_DESOCUPAR = 5    # Segundos sin persona para marcar como desocupada
+```text
+TRACKNY/
+├── app.py
+├── index.html
+├── render.yaml
+├── requirements.txt
+├── requirements-render.txt
+├── yolo26n.pt
+└── trackny/
+    ├── api.py
+    ├── cloud_app.py
+    ├── config.py
+    ├── frame_reader.py
+    ├── remote_publisher.py
+    ├── runner.py
+    ├── state.py
+    ├── storage.py
+    ├── video.py
+    └── zones.py
 ```
 
-También puedes modificar las zonas de detección ajustando los porcentajes:
-```python
-zona_m1_x2 = int(ancho * 0.40)  # Máquina 1: 40% izquierda
-zona_m2_x1 = int(ancho * 0.60)  # Máquina 2: 40% derecha (con 20% de espacio)
-```
+## Dependencias principales
 
-## Arquitectura del Sistema
+- `opencv-python`: captura, dibujo y codificación de frames
+- `ultralytics`: inferencia YOLO
+- `fastapi`: API local y cloud
+- `uvicorn`: servidor ASGI
+- `requests`: publicación remota
+- `pymongo`: persistencia opcional en MongoDB
+- `python-dotenv`: carga de variables de entorno
 
-```
-┌─────────────────────────────────────────────────┐
-│           Captura de Video (OpenCV)             │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│      Detección de Personas (YOLOv26)             │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│    Clasificación por Zona (Máquina 1 o 2)      │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│    Lógica Temporal (Contadores de Tiempo)       │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│  Actualización de Estado (Ocupada/Desocupada)   │
-└──────────────────┬──────────────────────────────┘
-                   │
-                   ▼
-┌─────────────────────────────────────────────────┐
-│      Visualización en Pantalla Completa         │
-└─────────────────────────────────────────────────┘
-```
+## Notas técnicas importantes
 
-## Mejoras Futuras
+- La precisión del sistema depende mucho de la posición real de la cámara y de que las zonas sigan alineadas con el encuadre.
+- El estado ocupada o libre no cambia por una sola detección; requiere tiempo continuo.
+- El guardado en MongoDB es por intervalos, no por frame, para reducir escrituras.
+- El frontend consume mejor el estado vía WebSocket y los totales vía HTTP separado.
 
-Este prototipo será expandido para incluir:
+## Reporte de resultados (para tu entrega)
 
-### Funcionalidades Planificadas
-- [ ] Soporte para más de 2 máquinas simultáneas
-- [ ] Integración con base de datos para historial de uso
-- [ ] API REST para consultar estados desde aplicaciones externas
-- [ ] Dashboard web para visualización remota
-- [ ] Notificaciones cuando máquinas quedan disponibles
-- [ ] Detección de tipo de máquina (impresora 3D, cortadora láser, etc.)
-- [ ] Sistema de reservas integrado
-- [ ] Análisis de patrones de uso y estadísticas
-- [ ] Detección de anomalías (máquina encendida sin usuario)
-- [ ] Múltiples cámaras para cobertura completa del IDIT
+Esta sección está pensada para que puedas copiarla casi tal cual en tu reporte final. Solo reemplaza los campos entre corchetes.
 
-### Integración con IDIT
-El sistema final permitirá:
-- Monitoreo de todas las máquinas del taller del IDIT
-- Información disponible en pantallas del laboratorio
-- Consulta desde aplicación móvil o web
-- Integración con sistema de acceso y permisos
-- Reportes de uso para mantenimiento preventivo
+### 1) Objetivo de la prueba
 
-## Estructura del Proyecto
+Validar que Trackny detecta ocupación de zonas de trabajo en tiempo real con estabilidad temporal, y que publica correctamente estados y tiempos acumulados.
 
-```
-ASEIII/
-│
-├── app.py              # Script principal
-├── README.md           # Este archivo
-├── venv/               # Entorno virtual (no incluido en repositorio)
-└── yolo26n.pt          # Modelo YOLO (descargar por separado)
-```
+### 2) Configuración experimental
 
-## Tecnologías Utilizadas
+- Fecha de prueba: [AAAA-MM-DD]
+- Lugar: [laboratorio / planta / aula]
+- Fuente de video: [cámara USB / archivo MP4]
+- Resolución: [ej. 1280x720]
+- Modelo: [yolo26n.pt]
+- Umbral para marcar ocupada (TIEMPO_PARA_OCUPAR): [10] s
+- Umbral para marcar libre (TIEMPO_PARA_DESOCUPAR): [5] s
+- Persistencia MongoDB: [activada / desactivada]
+- Publicación remota: [si / no]
 
-- **Python 3.12**: Lenguaje principal
-- **OpenCV**: Captura y procesamiento de video
-- **Ultralytics YOLO**: Detección de objetos en tiempo real
-- **YOLOv26**: Modelo de deep learning para detección de personas
+### 3) Escenarios evaluados
 
-## Créditos
+| Escenario | Descripción | Duración | Resultado esperado |
+|---|---|---:|---|
+| E1 | Sin personas en escena | [xx min] | Todas las zonas en LIBRE |
+| E2 | Persona entra a zona y permanece | [xx min] | Cambio a OCUPADA tras umbral |
+| E3 | Persona sale de zona | [xx min] | Cambio a LIBRE tras umbral |
+| E4 | Tránsito rápido por zona | [xx min] | Sin cambio permanente de estado |
+| E5 | Dos zonas activas simultáneamente | [xx min] | Estados independientes por zona |
 
-**Desarrollado para**: Instituto de Diseño e Innovación Tecnológica (IDIT)  
-**Universidad**: Iberoamericana Puebla  
-**Propósito**: Sistema de gestión e información de máquinas
+### 4) Métricas que sí puedes reportar con este sistema
+
+1. Latencia de activación por zona.
+  Tiempo entre entrada real de la persona y cambio de estado a OCUPADA.
+
+2. Latencia de liberación por zona.
+  Tiempo entre salida real de la persona y cambio de estado a LIBRE.
+
+3. Tiempo acumulado ocupado por zona.
+  Se obtiene en segundos por endpoint /api/ocupacion/hoy.
+
+4. Estabilidad de estado.
+  Número de cambios espurios (falsas transiciones) observados durante la prueba.
+
+5. Disponibilidad del sistema.
+  Tiempo total en ejecución sin caídas durante la sesión.
+
+### 5) Fórmulas sugeridas
+
+- Porcentaje de ocupación por zona:
+  ocupacion_porcentaje = (segundos_ocupada / segundos_totales_prueba) x 100
+
+- Error absoluto de latencia:
+  error_latencia = |latencia_observada - latencia_objetivo|
+
+- Tasa de falsas transiciones:
+  tasa_falsas_transiciones = (transiciones_falsas / transiciones_totales) x 100
+
+### 6) Tabla de resultados (llenado rápido)
+
+| Zona | Tiempo ocupado (s) | % ocupación | Latencia activación (s) | Latencia liberación (s) | Falsas transiciones |
+|---|---:|---:|---:|---:|---:|
+| zona1 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| zona2 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| zona3 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| zona4 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| zona5 | [ ] | [ ] | [ ] | [ ] | [ ] |
+| zona6 | [ ] | [ ] | [ ] | [ ] | [ ] |
+
+### 7) Análisis breve (plantilla redactada)
+
+Durante la evaluación, el sistema detectó correctamente la presencia de personas en las zonas definidas, manteniendo estabilidad en los cambios de estado gracias a los umbrales temporales configurados. Se observó que la latencia de activación promedio fue de [X] s y la latencia de liberación promedio de [Y] s, valores consistentes con los parámetros del sistema. En términos de ocupación, las zonas con mayor uso fueron [zona(s)], alcanzando [Z] % del tiempo total de prueba. No obstante, se identificaron [N] transiciones falsas en condiciones de [oclusiones/cambios de iluminación/tránsito rápido], lo que sugiere como mejora futura el ajuste fino de zonas y umbrales para escenarios más exigentes.
+
+### 8) Conclusión (plantilla)
+
+Trackny cumple con el objetivo de monitorear ocupación de zonas en tiempo real y generar métricas útiles para análisis operativo. Como trabajo futuro, se propone ampliar la validación con más condiciones de iluminación, múltiples cámaras y comparación contra etiquetado manual para cuantificar precisión global.
+
+### 9) Evidencia recomendada para anexos
+
+- Captura de pantalla de la vista con zonas y estados.
+- Captura del endpoint /api/ocupacion/hoy con datos del día.
+- Captura o liga del stream de video remoto (si aplica).
+- Tabla final de resultados en formato hoja de cálculo.
 
 ## Licencia
+
+No se ha definido una licencia pública en este repositorio.
 
 Este proyecto es parte de un desarrollo académico para la Universidad Iberoamericana Puebla.
 

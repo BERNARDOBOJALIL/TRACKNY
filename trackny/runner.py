@@ -132,6 +132,7 @@ def run() -> None:
         zone_names=zones,
         get_status_payload=occupancy_state.status_payload,
         get_today_totals=today_totals,
+        get_all_records=mongo_store.get_all_records,
         is_persistence_enabled=lambda: mongo_store.enabled,
     )
 

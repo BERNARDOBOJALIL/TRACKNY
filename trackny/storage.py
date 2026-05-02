@@ -133,6 +133,30 @@ class MongoOccupancyStore:
                     totals[mid] += secs
         return totals
 
+    def get_all_records(self) -> list[dict]:
+        if not self.enabled or self._collection is None:
+            return []
+
+        projection = {
+            "_id": 1,
+            "date": 1,
+            "machine_id": 1,
+            "created_at": 1,
+            "occupied_seconds": 1,
+            "updated_at": 1,
+        }
+        cursor = self._collection.find({}, projection).sort(
+            [("date", 1), ("machine_id", 1), ("created_at", 1)]
+        )
+
+        records: list[dict] = []
+        for doc in cursor:
+            record = dict(doc)
+            if "_id" in record:
+                record["_id"] = str(record["_id"])
+            records.append(record)
+        return records
+
     def close(self) -> None:
         if not self.enabled:
             return

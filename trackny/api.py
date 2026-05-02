@@ -16,12 +16,14 @@ class APIServer:
         zone_names: list[str],
         get_status_payload: Callable[[], dict[str, int]],
         get_today_totals: Callable[[], dict[str, float]],
+        get_all_records: Callable[[], list[dict]],
         is_persistence_enabled: Callable[[], bool],
     ) -> None:
         self.frontend_path = frontend_path
         self.zone_names = zone_names
         self.get_status_payload = get_status_payload
         self.get_today_totals = get_today_totals
+        self.get_all_records = get_all_records
         self.is_persistence_enabled = is_persistence_enabled
 
         self.app = FastAPI()
@@ -64,6 +66,10 @@ class APIServer:
                 "fecha_utc": datetime.now(timezone.utc).date().isoformat(),
                 **{f"{z}_segundos": round(float(totals.get(z, 0.0)), 2) for z in self.zone_names},
             }
+
+        @self.app.get("/api/ocupacion/registros")
+        async def ocupacion_registros() -> list[dict]:
+            return self.get_all_records()
 
     async def _broadcast(self, data: dict[str, int]) -> None:
         for cliente in list(self._clientes_conectados):
