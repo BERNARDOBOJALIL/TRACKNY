@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .config import settings
+from .storage import MongoOccupancyStore
 
 
 class CloudStateStore:
@@ -64,6 +65,13 @@ class CloudAPIServer:
     def __init__(self, frontend_path: Path, zone_names: list[str]) -> None:
         self.frontend_path = frontend_path
         self.store = CloudStateStore(zone_names)
+        self.mongo_store = MongoOccupancyStore(
+            uri=settings.mongo_uri,
+            db_name=settings.mongo_db_name,
+            collection_name=settings.mongo_collection,
+            zone_names=zone_names,
+            flush_interval=settings.mongo_flush_interval,
+        )
         self.app = FastAPI(title="Trackny Cloud API")
         self._clientes_conectados: set[WebSocket] = set()
         self._server_loop: Optional[asyncio.AbstractEventLoop] = None
@@ -134,6 +142,10 @@ class CloudAPIServer:
                 "fecha_utc": datetime.now(timezone.utc).date().isoformat(),
                 **{f"{z}_segundos": round(float(totals.get(z, 0.0)), 2) for z in self.store.zone_names},
             }
+
+        @self.app.get("/api/ocupacion/registros")
+        async def ocupacion_registros() -> list[dict]:
+            return self.mongo_store.get_all_records()
 
         @self.app.get("/api/video/meta")
         async def video_meta() -> dict:

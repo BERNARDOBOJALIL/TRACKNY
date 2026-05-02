@@ -196,6 +196,7 @@ Ejemplo de un elemento de la respuesta:
 - `GET /ws`
 - `GET /healthz`
 - `GET /api/ocupacion/hoy`
+- `GET /api/ocupacion/registros`
 - `GET /api/video/meta`
 - `GET /api/video/snapshot`
 - `GET /api/video/live`
